@@ -26,11 +26,12 @@ able to join through crossplay.
 
 ### Active
 
-- [ ] Distinguish Steam Windows, WinGDK/Game Pass PC, Mac, PS5, and individual
-      Xbox console families using server-owned session data.
+- [ ] Distinguish Steam Windows, WinGDK/Game Pass PC, Linux, Mac, the two PS5
+      models, and individual Xbox console families using server-owned session
+      data.
 - [ ] Exempt only confirmed Xbox console hardware and PS5.
-- [ ] Require Steam Windows, WinGDK/Game Pass PC, Mac, and unknown platforms to
-      complete PalVerify verification.
+- [ ] Require Steam Windows, WinGDK/Game Pass PC, Linux, Mac, and unknown
+      platforms to complete PalVerify verification.
 - [ ] Challenge required clients and reject missing, stale, invalid, or
       unsupported client versions.
 - [ ] Kick required clients after verification or heartbeat grace periods
@@ -60,10 +61,11 @@ able to join through crossplay.
 
 - The dedicated server runs Windows and allows crossplay.
 - Only real Xbox console hardware and PS5 are exempt.
-- Steam Windows, WinGDK/Game Pass PC, and Mac must run PalVerify.
+- Steam Windows, WinGDK/Game Pass PC, Linux, and Mac must run PalVerify.
 - Community SDK/header evidence exposes supported-platform values that separate
-  Windows, WinGDK, Mac, PS5, and Xbox hardware models. The exact per-connection
-  server access path must be validated against the deployed Palworld build.
+  Windows, WinGDK, Linux, Mac, PS5, and Xbox hardware models. The exact
+  per-connection server access path must be validated against the deployed
+  Palworld build.
 - Palworld's public REST player schema does not expose a documented platform
   field, so REST-only enforcement is insufficient for the final policy.
 - Existing local PalAntiCheat work demonstrates a conservative UE4SS server

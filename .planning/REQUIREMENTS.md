@@ -12,8 +12,8 @@ session, while real Xbox consoles and PS5 remain able to join.
   platform without trusting client-supplied platform data.
 - [ ] **PLAT-02**: Confirmed Xbox console models and PS5 bypass client
   verification.
-- [ ] **PLAT-03**: Steam Windows, WinGDK/Game Pass PC, Mac, generic PC, and
-  Unknown require verification.
+- [ ] **PLAT-03**: Steam Windows, WinGDK/Game Pass PC, Linux, Mac, generic PC,
+  and Unknown require verification.
 - [ ] **PLAT-04**: Unknown or unmapped runtime platform values never become
   exempt.
 - [ ] **PLAT-05**: Server can run platform discovery in observation-only mode
@@ -52,7 +52,7 @@ session, while real Xbox consoles and PS5 remain able to join.
 - [ ] **SAFE-02**: Client integrity reports contain rule identifiers instead of
   complete process or file inventories.
 - [ ] **SAFE-03**: Automatic permanent bans are disabled in v1.
-- [ ] **SAFE-04**: All pure policy and session behaviors are covered by
+- [x] **SAFE-04**: All pure policy and session behaviors are covered by
   repeatable unit tests.
 
 ## v2 Requirements
@@ -105,7 +105,7 @@ session, while real Xbox consoles and PS5 remain able to join.
 | SAFE-01 | Phase 1 | In Progress |
 | SAFE-02 | Phase 3 | Pending |
 | SAFE-03 | Phase 1 | In Progress |
-| SAFE-04 | Phase 1 | In Progress |
+| SAFE-04 | Phase 1 | Complete |
 
 **Coverage:**
 

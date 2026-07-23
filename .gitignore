@@ -1,4 +1,6 @@
 /build/
+/.deps/
+node_modules/
 /.vs/
 /out/
 *.user

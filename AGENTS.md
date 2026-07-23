@@ -2,8 +2,8 @@
 
 - Target a Windows Palworld dedicated server and supported PalVerify clients.
 - Exempt only server-confirmed Xbox console hardware and PS5.
-- Require Steam Windows, WinGDK/Game Pass PC, Mac, and unknown platforms to
-  verify.
+- Require Steam Windows, WinGDK/Game Pass PC, Linux, Mac, and unknown platforms
+  to verify.
 - Never trust a client-supplied platform value.
 - Keep the pure policy/session core independent of UE4SS and Palworld headers.
 - Use test-driven development for every behavior change.

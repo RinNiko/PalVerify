@@ -1,0 +1,31 @@
+{
+  "ModName": "PalVerify",
+  "PackageName": "PalVerify",
+  "Thumbnail": "thumbnail.png",
+  "Version": "0.1.0-dev",
+  "DebugMode": true,
+  "MinRevision": 0,
+  "Author": "Palworld 3 Mien",
+  "Dependencies": [
+    "UE4SS"
+  ],
+  "Tags": [
+    "UE4SS",
+    "Utilities"
+  ],
+  "InstallRule": [
+    {
+      "Type": "Lua",
+      "Targets": [
+        "./client"
+      ]
+    },
+    {
+      "Type": "Lua",
+      "IsServer": true,
+      "Targets": [
+        "./server"
+      ]
+    }
+  ]
+}

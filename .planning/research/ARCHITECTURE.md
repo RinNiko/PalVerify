@@ -27,8 +27,9 @@
 
 ## Platform Policy
 
-- Exempt: PS5 and exact Xbox console hardware families.
-- Required: Windows/Steam, WinGDK/Game Pass PC, Mac, generic PC, and Unknown.
+- Exempt: exact `PS5Base`, `PS5Trinity`, and Xbox console hardware families.
+- Required: Windows/Steam, WinGDK/Game Pass PC, Linux, Mac, generic PC, and
+  Unknown.
 
 ## Runtime Spike
 
