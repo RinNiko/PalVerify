@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="PalVerify"
+    Manufacturer="Palworld 3 Mien"
+    Version="$(var.Version)"
+    UpgradeCode="04E90B75-B40F-4F61-B7E4-F351DAFF0EB3"
+    Scope="perUser"
+    Language="1033"
+    Codepage="65001">
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of PalVerify is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="PalVerify">
+          <Component
+            Id="LauncherComponent"
+            Guid="*">
+            <File
+              Id="LauncherFile"
+              Source="$(var.SourceRoot)\PalVerifyLauncher.exe"
+              KeyPath="yes" />
+          </Component>
+          <Component
+            Id="ReadmeComponent"
+            Guid="*">
+            <File
+              Id="ReadmeFile"
+              Source="$(var.SourceRoot)\README.txt"
+              KeyPath="yes" />
+          </Component>
+          <Component
+            Id="HashManifestComponent"
+            Guid="*">
+            <File
+              Id="HashManifestFile"
+              Source="$(var.SourceRoot)\SHA256SUMS.txt"
+              KeyPath="yes" />
+          </Component>
+
+          <Directory Id="PayloadFolder" Name="payload">
+            <Component
+              Id="InfoComponent"
+              Guid="*">
+              <File
+                Id="InfoFile"
+                Source="$(var.SourceRoot)\payload\Info.json"
+                KeyPath="yes" />
+            </Component>
+            <Component
+              Id="ThumbnailComponent"
+              Guid="*">
+              <File
+                Id="ThumbnailFile"
+                Source="$(var.SourceRoot)\payload\thumbnail.png"
+                KeyPath="yes" />
+            </Component>
+
+            <Directory Id="ClientFolder" Name="client">
+              <Component
+                Id="ClientReadmeComponent"
+                Guid="*">
+                <File
+                  Id="ClientReadmeFile"
+                  Source="$(var.SourceRoot)\payload\client\README.md"
+                  KeyPath="yes" />
+              </Component>
+              <Component
+                Id="ClientEnabledComponent"
+                Guid="*">
+                <File
+                  Id="ClientEnabledFile"
+                  Source="$(var.SourceRoot)\payload\client\enabled.txt"
+                  KeyPath="yes" />
+              </Component>
+
+              <Directory Id="ClientScriptsFolder" Name="Scripts">
+                <Component
+                  Id="ClientMainComponent"
+                  Guid="*">
+                  <File
+                    Id="ClientMainFile"
+                    Source="$(var.SourceRoot)\payload\client\Scripts\main.lua"
+                    KeyPath="yes" />
+                </Component>
+                <Component
+                  Id="ClientAgentComponent"
+                  Guid="*">
+                  <File
+                    Id="ClientAgentFile"
+                    Source="$(var.SourceRoot)\payload\client\Scripts\PalVerifyClient.exe"
+                    KeyPath="yes" />
+                </Component>
+              </Directory>
+            </Directory>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="PalVerify">
+        <Component
+          Id="StartMenuShortcutComponent"
+          Guid="*">
+          <Shortcut
+            Id="StartMenuShortcut"
+            Name="PalVerify Launcher"
+            Description="Install or update the PalVerify Palworld client mod"
+            Target="[INSTALLFOLDER]PalVerifyLauncher.exe"
+            WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder
+            Id="RemoveApplicationProgramsFolder"
+            On="uninstall" />
+          <RegistryValue
+            Root="HKCU"
+            Key="Software\Palworld3Mien\PalVerify"
+            Name="StartMenuShortcut"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Complete" Title="PalVerify" Level="1">
+      <ComponentRef Id="LauncherComponent" />
+      <ComponentRef Id="ReadmeComponent" />
+      <ComponentRef Id="HashManifestComponent" />
+      <ComponentRef Id="InfoComponent" />
+      <ComponentRef Id="ThumbnailComponent" />
+      <ComponentRef Id="ClientReadmeComponent" />
+      <ComponentRef Id="ClientEnabledComponent" />
+      <ComponentRef Id="ClientMainComponent" />
+      <ComponentRef Id="ClientAgentComponent" />
+      <ComponentRef Id="StartMenuShortcutComponent" />
+    </Feature>
+  </Package>
+</Wix>

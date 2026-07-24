@@ -50,6 +50,9 @@ Implemented:
 - Official Palworld package-layout draft.
 - Reproducible Windows and server-observation ZIP packaging with SHA-256
   manifests and optional Authenticode signing.
+- Per-user NSIS setup executable and MSI package with Start Menu integration,
+  clean uninstall, major-upgrade handling, SHA-256 manifests, and optional
+  Authenticode signing.
 
 Not implemented yet:
 
@@ -68,11 +71,35 @@ From PowerShell:
 ```powershell
 .\scripts\build.ps1
 .\scripts\package.ps1
+.\scripts\package-installers.ps1
 ```
 
 The script uses Visual Studio 2022's bundled CMake and builds the pure core
 without requiring Palworld or UE4SS. The packaging script produces the Windows
 launcher bundle and the server-observation ZIP under `dist`.
+
+`package-installers.ps1` additionally creates:
+
+- `PalVerify_0.2.0_x64-setup.exe`: recommended NSIS installer.
+- `PalVerify_0.2.0_x64_en-US.msi`: Windows Installer alternative.
+- `PalVerify_INSTALLER_SHA256SUMS.txt`: hashes for both installers.
+
+Both installers use `%LOCALAPPDATA%\Programs\PalVerify`, require no
+administrator privileges, and create a Start Menu shortcut. The NSIS finish
+page can start PalVerify Launcher immediately; after an MSI install, launch it
+from the Start Menu.
+
+Installer build prerequisites:
+
+```powershell
+winget install --exact --id NSIS.NSIS
+dotnet tool install --tool-path .deps\wix5 wix --version 5.0.2
+```
+
+WiX 5.0.2 is pinned so the build remains reproducible without automatically
+accepting the WiX 6/7 OSMF EULA. Uninstalling the Windows application removes
+the launcher and its bundled payload, but intentionally does not delete the mod
+already installed inside Palworld or overwrite the settings backup.
 
 The release executables are plain Microsoft Visual C++ binaries: they are not
 packed, obfuscated, injected into another process, installed as a driver, or

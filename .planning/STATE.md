@@ -25,6 +25,10 @@ current PalVerify session, while real Xbox consoles and PS5 retain crossplay.
 - Official package metadata resolves every target and thumbnail.
 - Windows and server-observation release ZIPs are reproducibly packaged with
   SHA-256 output. Defender command-line scans reported no detections.
+- Per-user NSIS and MSI installers build reproducibly with NSIS 3.12 and WiX
+  5.0.2. Both formats were installed, payload-hash verified, used to run the
+  launcher, and uninstalled successfully; the NSIS build is installed on the
+  current machine.
 - BNB DatHost has timestamped `mods.txt` and `mods.json` backups, the PalVerify
   server probe enabled in both lists, and all uploaded files were downloaded
   and SHA-256 verified.

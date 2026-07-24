@@ -1,5 +1,14 @@
 PalVerify Windows v0.2.0
 
+Recommended:
+  Run PalVerify_0.2.0_x64-setup.exe, then choose Run PalVerify Launcher on the
+  finish page.
+
+MSI alternative:
+  Run PalVerify_0.2.0_x64_en-US.msi, then open PalVerify Launcher from the
+  Start Menu.
+
+Portable ZIP:
 1. Keep PalVerifyLauncher.exe and the payload folder together.
 2. Close Palworld.
 3. Run PalVerifyLauncher.exe.
@@ -11,6 +20,13 @@ The first install creates:
 
 Client log:
   %LOCALAPPDATA%\PalVerify\PalVerifyClient.log
+
+Windows application location:
+  %LOCALAPPDATA%\Programs\PalVerify
+
+The Windows uninstaller removes the launcher application and bundled payload.
+It intentionally does not delete the PalVerify files already installed inside
+Palworld or restore PalModSettings.ini automatically.
 
 Security:
   - Built with Microsoft Visual C++.

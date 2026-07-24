@@ -34,5 +34,5 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-npm run test:probe
+npm test
 exit $LASTEXITCODE
