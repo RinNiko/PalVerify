@@ -8,9 +8,49 @@ local Config = require("config")
 local SymbolFilter = require("palverify.symbol_filter")
 
 local started = false
+local server_agent_started = false
 
 local function log(level, message)
     print(string.format("[PalVerify] [%s] %s\n", level, message))
+end
+
+local function start_server_agent()
+    if server_agent_started then
+        return
+    end
+    server_agent_started = true
+
+    local executable =
+        ".\\ue4ss\\Mods\\PalVerify\\Scripts\\PalVerifyServer.exe"
+    local command = "cmd.exe /d /c " .. executable
+    ExecuteAsync(function()
+        local invoked, result, reason, code =
+            pcall(os.execute, command)
+        if not invoked or not result then
+            log(
+                "ERROR",
+                "PalVerifyServer.exe launch failed (invoked "
+                    .. tostring(invoked)
+                    .. ", result "
+                    .. tostring(result)
+                    .. ", reason "
+                    .. tostring(reason)
+                    .. ", code "
+                    .. tostring(code)
+                    .. ")."
+            )
+            return
+        end
+        log(
+            "WARN",
+            "PalVerifyServer.exe exited (reason "
+                .. tostring(reason)
+                .. ", code "
+                .. tostring(code)
+                .. ")."
+        )
+    end)
+    log("INFO", "Server verification agent requested.")
 end
 
 local function call_method(object, method_name, ...)
@@ -129,10 +169,12 @@ local function run_probe()
 end
 
 RegisterInitGameStatePostHook(function()
+    start_server_agent()
     run_probe()
 end)
 
 ExecuteInGameThreadWithDelay(Config.startup_delay_ms, function()
+    start_server_agent()
     run_probe()
 end)
 
@@ -141,3 +183,5 @@ log("INFO", string.format(
     Config.version,
     tostring(Config.observation_only)
 ))
+
+start_server_agent()

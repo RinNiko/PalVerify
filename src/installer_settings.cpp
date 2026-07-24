@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <set>
+#include <span>
 #include <regex>
 #include <system_error>
 #include <string>
@@ -97,9 +99,91 @@ namespace {
     };
 }
 
+[[nodiscard]] auto safe_payload_path(
+    const std::filesystem::path& relative_path
+) -> bool
+{
+    if (relative_path.empty() || relative_path.is_absolute()
+        || relative_path.has_root_name()
+        || relative_path.has_root_directory()) {
+        return false;
+    }
+    for (const auto& component : relative_path) {
+        if (component.empty() || component == "."
+            || component == "..") {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] auto required_payload_files_present(
+    std::span<const PayloadFile> files
+) -> bool
+{
+    const std::set<std::string> paths = [&files] {
+        std::set<std::string> values;
+        for (const auto& file : files) {
+            values.insert(file.relative_path.generic_string());
+        }
+        return values;
+    }();
+    return paths.contains("Info.json")
+        && paths.contains("client/Scripts/main.lua")
+        && paths.contains("client/Scripts/PalVerifyClient.exe");
+}
+
+[[nodiscard]] auto update_palmod_settings(
+    const std::filesystem::path& mods_root
+) -> InstallResult
+{
+    const auto settings_path = mods_root / "PalModSettings.ini";
+    const auto backup_path =
+        mods_root / "PalModSettings.ini.palverify-backup";
+    const auto temporary_path =
+        mods_root / "PalModSettings.ini.palverify-tmp";
+
+    std::string existing_settings;
+    if (std::filesystem::is_regular_file(settings_path)) {
+        std::ifstream input{settings_path, std::ios::binary};
+        existing_settings.assign(
+            std::istreambuf_iterator<char>{input},
+            std::istreambuf_iterator<char>{}
+        );
+        if (!std::filesystem::exists(backup_path)) {
+            std::filesystem::copy_file(settings_path, backup_path);
+        }
+    }
+
+    const auto updated_settings =
+        remove_palverify_game_mod_activation(existing_settings);
+    {
+        std::ofstream output{
+            temporary_path,
+            std::ios::binary | std::ios::trunc,
+        };
+        output.write(
+            updated_settings.data(),
+            static_cast<std::streamsize>(updated_settings.size())
+        );
+        if (!output) {
+            return {.success = false, .detail = "settings-write-failed"};
+        }
+    }
+    std::filesystem::copy_file(
+        temporary_path,
+        settings_path,
+        std::filesystem::copy_options::overwrite_existing
+    );
+    std::filesystem::remove(temporary_path);
+    return {.success = true, .detail = "settings-updated"};
+}
+
 }  // namespace
 
-auto enable_palverify_mod(std::string_view existing_settings) -> std::string
+auto remove_palverify_game_mod_activation(
+    std::string_view existing_settings
+) -> std::string
 {
     const auto newline =
         existing_settings.find("\r\n") != std::string_view::npos ? "\r\n"
@@ -118,55 +202,29 @@ auto enable_palverify_mod(std::string_view existing_settings) -> std::string
     }
 
     if (section_start == lines.size()) {
-        if (!lines.empty() && !lines.back().empty()) {
-            lines.emplace_back();
-        }
-        lines.emplace_back("[PalModSettings]");
-        lines.emplace_back("bGlobalEnableMod=True");
-        lines.emplace_back("ActiveModList=PalVerify");
-    } else {
-        auto section_end = lines.size();
-        for (std::size_t index = section_start + 1; index < lines.size();
-             ++index) {
-            if (!section_name(lines[index]).empty()) {
-                section_end = index;
-                break;
-            }
-        }
+        return std::string{existing_settings};
+    }
 
-        auto global_index = lines.size();
-        bool palverify_active = false;
-        for (std::size_t index = section_start + 1; index < section_end;
-             ++index) {
-            const auto [key, value] = key_value(lines[index]);
-            if (ascii_equals_ignore_case(key, "bGlobalEnableMod")) {
-                global_index = index;
-            } else if (
-                ascii_equals_ignore_case(key, "ActiveModList")
-                && ascii_equals_ignore_case(value, "PalVerify")
-            ) {
-                palverify_active = true;
-            }
-        }
-
-        if (global_index == lines.size()) {
-            global_index = section_start + 1;
-            lines.insert(
-                lines.begin() + static_cast<std::ptrdiff_t>(global_index),
-                "bGlobalEnableMod=True"
-            );
-        } else {
-            lines[global_index] = "bGlobalEnableMod=True";
-        }
-
-        if (!palverify_active) {
-            lines.insert(
-                lines.begin()
-                    + static_cast<std::ptrdiff_t>(global_index + 1),
-                "ActiveModList=PalVerify"
-            );
+    auto section_end = lines.size();
+    for (std::size_t index = section_start + 1; index < lines.size();
+         ++index) {
+        if (!section_name(lines[index]).empty()) {
+            section_end = index;
+            break;
         }
     }
+    lines.erase(
+        std::remove_if(
+            lines.begin() + static_cast<std::ptrdiff_t>(section_start + 1),
+            lines.begin() + static_cast<std::ptrdiff_t>(section_end),
+            [](const std::string& line) {
+                const auto [key, value] = key_value(line);
+                return ascii_equals_ignore_case(key, "ActiveModList")
+                    && ascii_equals_ignore_case(value, "PalVerify");
+            }
+        ),
+        lines.begin() + static_cast<std::ptrdiff_t>(section_end)
+    );
 
     std::string updated;
     for (const auto& line : lines) {
@@ -229,80 +287,115 @@ auto install_palverify_payload(
     const std::filesystem::path& payload_root
 ) -> InstallResult
 {
+    try {
+        std::vector<PayloadFile> files;
+        if (!std::filesystem::is_directory(payload_root)) {
+            return {.success = false, .detail = "incomplete-payload"};
+        }
+        for (const auto& entry :
+             std::filesystem::recursive_directory_iterator{payload_root}) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            std::ifstream input{entry.path(), std::ios::binary};
+            std::vector<char> raw{
+                std::istreambuf_iterator<char>{input},
+                std::istreambuf_iterator<char>{},
+            };
+            std::vector<std::byte> content(raw.size());
+            std::ranges::transform(
+                raw,
+                content.begin(),
+                [](char value) {
+                    return static_cast<std::byte>(
+                        static_cast<unsigned char>(value)
+                    );
+                }
+            );
+            files.push_back({
+                .relative_path =
+                    std::filesystem::relative(entry.path(), payload_root),
+                .content = std::move(content),
+                .sha256 = {},
+            });
+            files.back().sha256 = sha256_hex(files.back().content);
+        }
+        return install_palverify_payload(game_root, files);
+    } catch (const std::filesystem::filesystem_error& error) {
+        return {.success = false, .detail = error.code().message()};
+    }
+}
+
+auto install_palverify_payload(
+    const std::filesystem::path& game_root,
+    std::span<const PayloadFile> files
+) -> InstallResult
+{
     const auto game_executable =
         game_root / "Pal" / "Binaries" / "Win64"
         / "Palworld-Win64-Shipping.exe";
-    const auto info_path = payload_root / "Info.json";
-    const auto client_script =
-        payload_root / "client" / "Scripts" / "main.lua";
-    const auto client_agent =
-        payload_root / "client" / "Scripts" / "PalVerifyClient.exe";
-
     if (!std::filesystem::is_regular_file(game_executable)) {
         return {.success = false, .detail = "invalid-game-root"};
     }
-    if (!std::filesystem::is_regular_file(info_path)
-        || !std::filesystem::is_regular_file(client_script)
-        || !std::filesystem::is_regular_file(client_agent)) {
+    if (!required_payload_files_present(files)) {
         return {.success = false, .detail = "incomplete-payload"};
+    }
+
+    std::set<std::string> unique_paths;
+    for (const auto& file : files) {
+        const auto normalized = file.relative_path.lexically_normal();
+        const auto path_key = normalized.generic_string();
+        if (!safe_payload_path(normalized)
+            || !unique_paths.insert(path_key).second) {
+            return {.success = false, .detail = "invalid-payload-path"};
+        }
+        if (file.sha256.size() != 64
+            || sha256_hex(file.content) != file.sha256) {
+            return {.success = false, .detail = "payload-hash-mismatch"};
+        }
     }
 
     try {
         const auto mods_root = game_root / "Mods";
         const auto package_target =
             mods_root / "Workshop" / "PalVerify";
-        const auto settings_path = mods_root / "PalModSettings.ini";
-        const auto backup_path =
-            mods_root / "PalModSettings.ini.palverify-backup";
-        const auto temporary_path =
-            mods_root / "PalModSettings.ini.palverify-tmp";
-
         std::filesystem::create_directories(package_target);
-        std::filesystem::copy(
-            payload_root,
-            package_target,
-            std::filesystem::copy_options::recursive
-                | std::filesystem::copy_options::overwrite_existing
-                | std::filesystem::copy_options::copy_symlinks
-        );
-
-        std::string existing_settings;
-        if (std::filesystem::is_regular_file(settings_path)) {
-            std::ifstream input{settings_path, std::ios::binary};
-            existing_settings.assign(
-                std::istreambuf_iterator<char>{input},
-                std::istreambuf_iterator<char>{}
-            );
-            if (!std::filesystem::exists(backup_path)) {
-                std::filesystem::copy_file(settings_path, backup_path);
+        for (const auto& file : files) {
+            const auto target =
+                package_target / file.relative_path.lexically_normal();
+            std::filesystem::create_directories(target.parent_path());
+            const auto temporary =
+                std::filesystem::path{target.wstring() + L".palverify-tmp"};
+            {
+                std::ofstream output{
+                    temporary,
+                    std::ios::binary | std::ios::trunc,
+                };
+                output.write(
+                    reinterpret_cast<const char*>(file.content.data()),
+                    static_cast<std::streamsize>(file.content.size())
+                );
+                if (!output) {
+                    return {
+                        .success = false,
+                        .detail = "payload-write-failed",
+                    };
+                }
             }
-        }
-
-        const auto updated_settings =
-            enable_palverify_mod(existing_settings);
-        {
-            std::ofstream output{
-                temporary_path,
-                std::ios::binary | std::ios::trunc,
-            };
-            output.write(
-                updated_settings.data(),
-                static_cast<std::streamsize>(updated_settings.size())
+            std::filesystem::copy_file(
+                temporary,
+                target,
+                std::filesystem::copy_options::overwrite_existing
             );
-            if (!output) {
-                return {.success = false, .detail = "settings-write-failed"};
-            }
+            std::filesystem::remove(temporary);
         }
-        std::filesystem::copy_file(
-            temporary_path,
-            settings_path,
-            std::filesystem::copy_options::overwrite_existing
-        );
-        std::filesystem::remove(temporary_path);
+        const auto settings = update_palmod_settings(mods_root);
+        if (!settings.success) {
+            return settings;
+        }
     } catch (const std::filesystem::filesystem_error& error) {
         return {.success = false, .detail = error.code().message()};
     }
-
     return {.success = true, .detail = "installed"};
 }
 

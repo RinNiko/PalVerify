@@ -1,0 +1,46 @@
+#include "resource.h"
+
+IDI_PAL3MIEN ICON "pal3mien.ico"
+
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Palworld 3 Mien"
+            VALUE "FileDescription", "Palworld 3 Mien Launcher"
+            VALUE "FileVersion", "1.0"
+            VALUE "InternalName", "Pal3Mien"
+            VALUE "OriginalFilename", "Pal3Mien.exe"
+            VALUE "ProductName", "Palworld 3 Mien Launcher"
+            VALUE "ProductVersion", "1.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
+
+IDR_BACKGROUND RCDATA "background-reference-v2.png"
+IDR_LOGO RCDATA "logo-palworld-3-mien.png"
+IDR_PANEL_STATUS RCDATA "panel-status-template.png"
+IDR_PANEL_VERSION RCDATA "panel-version-template.png"
+IDR_BUTTON_START RCDATA "button-start-ready-reference.png"
+IDR_BUTTON_NEWS RCDATA "button-news-reference.png"
+IDR_PROGRESS RCDATA "progress-bar-100.png"
+IDR_ICON_CHECK RCDATA "icon-check.png"
+IDR_ICON_CLOSE RCDATA "icon-close.png"
+IDR_ICON_GLOBE RCDATA "icon-globe.png"
+IDR_ICON_MINIMIZE RCDATA "icon-minimize.png"
+IDR_ICON_NEWS RCDATA "icon-news.png"
+IDR_ICON_REFRESH RCDATA "icon-refresh.png"
+IDR_SMALL_LOGO RCDATA "reference-small-palworld-logo.png"

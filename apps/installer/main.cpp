@@ -124,6 +124,41 @@ void show_result(bool silent, UINT flags, const wchar_t* message)
     }
 }
 
+[[nodiscard]] auto start_client_agent(
+    const std::filesystem::path& game_root
+) -> bool
+{
+    const auto executable =
+        game_root / "Mods" / "Workshop" / "PalVerify" / "client"
+        / "Scripts" / "PalVerifyClient.exe";
+    if (!std::filesystem::is_regular_file(executable)) {
+        return false;
+    }
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    const auto working_directory = executable.parent_path().wstring();
+    const auto created = CreateProcessW(
+        executable.c_str(),
+        nullptr,
+        nullptr,
+        nullptr,
+        FALSE,
+        CREATE_NO_WINDOW,
+        nullptr,
+        working_directory.c_str(),
+        &startup,
+        &process
+    );
+    if (created == FALSE) {
+        return false;
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
+}
+
 }  // namespace
 
 auto WINAPI wWinMain(
@@ -159,6 +194,14 @@ auto WINAPI wWinMain(
     }
 
     if (!arguments.install_only) {
+        if (!start_client_agent(*game_root)) {
+            show_result(
+                arguments.silent,
+                MB_OK | MB_ICONERROR,
+                L"Khong the khoi dong PalVerifyClient.exe."
+            );
+            return 4;
+        }
         ShellExecuteW(
             nullptr,
             L"open",

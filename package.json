@@ -1,11 +1,11 @@
 {
   "name": "palverify",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Client/server verification and anti-cheat mod for Palworld",
   "scripts": {
     "test": "npm run test:probe && npm run test:installers",
-    "test:probe": "fengari tests/probe_tests.lua && fengari tests/client_probe_tests.lua",
+    "test:probe": "fengari tests/probe_tests.lua && fengari tests/client_probe_tests.lua && fengari tests/server_agent_probe_tests.lua",
     "test:installers": "powershell -ExecutionPolicy Bypass -File tests/windows_installer_package_tests.ps1"
   },
   "devDependencies": {

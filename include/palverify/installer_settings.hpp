@@ -1,15 +1,19 @@
 #pragma once
 
+#include "palverify/payload_archive.hpp"
+
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace palverify {
 
-[[nodiscard]] auto enable_palverify_mod(std::string_view existing_settings)
-    -> std::string;
+[[nodiscard]] auto remove_palverify_game_mod_activation(
+    std::string_view existing_settings
+) -> std::string;
 
 [[nodiscard]] auto extract_steam_library_paths(std::string_view vdf)
     -> std::vector<std::filesystem::path>;
@@ -26,6 +30,11 @@ struct InstallResult {
 [[nodiscard]] auto install_palverify_payload(
     const std::filesystem::path& game_root,
     const std::filesystem::path& payload_root
+) -> InstallResult;
+
+[[nodiscard]] auto install_palverify_payload(
+    const std::filesystem::path& game_root,
+    std::span<const PayloadFile> files
 ) -> InstallResult;
 
 }  // namespace palverify

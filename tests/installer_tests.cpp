@@ -1,11 +1,14 @@
 #include "palverify/installer_settings.hpp"
+#include "palverify/payload_archive.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -44,17 +47,28 @@ void require_contains(
     require(text.find(expected) != std::string_view::npos, message);
 }
 
-void settings_update_preserves_existing_values()
+void require_not_contains(
+    std::string_view text,
+    std::string_view unexpected,
+    std::string_view message
+)
+{
+    require(text.find(unexpected) == std::string_view::npos, message);
+}
+
+void settings_update_removes_legacy_palverify_activation()
 {
     constexpr std::string_view existing =
         "; custom comment\r\n"
         "[PalModSettings]\r\n"
         "bGlobalEnableMod=False\r\n"
         "WorkshopRootDir=E:\\SteamLibrary\\steamapps\\workshop\\content\\1623730\r\n"
+        "ActiveModList=PalVerify\r\n"
         "ActiveModList=ExistingMod\r\n"
         "ConfigVersion=1.0\r\n";
 
-    const auto updated = palverify::enable_palverify_mod(existing);
+    const auto updated =
+        palverify::remove_palverify_game_mod_activation(existing);
 
     require_contains(
         updated,
@@ -73,13 +87,13 @@ void settings_update_preserves_existing_values()
     );
     require_contains(
         updated,
-        "bGlobalEnableMod=True\r\n",
-        "global mod loading must be enabled"
+        "bGlobalEnableMod=False\r\n",
+        "global mod setting must survive"
     );
-    require_contains(
+    require_not_contains(
         updated,
         "ActiveModList=PalVerify\r\n",
-        "PalVerify must be activated"
+        "legacy PalVerify game-mod activation must be removed"
     );
 }
 
@@ -91,32 +105,27 @@ void settings_update_is_idempotent()
         "ActiveModList=PalVerify\n"
         "ConfigVersion=1.0\n";
 
-    const auto once = palverify::enable_palverify_mod(existing);
-    const auto twice = palverify::enable_palverify_mod(once);
+    const auto once =
+        palverify::remove_palverify_game_mod_activation(existing);
+    const auto twice =
+        palverify::remove_palverify_game_mod_activation(once);
 
     require(once == twice, "repeated install must not change settings");
-    const auto first = once.find("ActiveModList=PalVerify");
-    require(first != std::string::npos, "PalVerify entry must exist");
-    require(
-        once.find("ActiveModList=PalVerify", first + 1) == std::string::npos,
-        "PalVerify entry must not be duplicated"
+    require_not_contains(
+        once,
+        "ActiveModList=PalVerify",
+        "PalVerify activation must stay removed"
     );
 }
 
-void missing_section_is_created_without_discarding_input()
+void missing_section_is_left_unchanged()
 {
     constexpr std::string_view existing = "; keep me\nOtherSetting=42\n";
 
-    const auto updated = palverify::enable_palverify_mod(existing);
+    const auto updated =
+        palverify::remove_palverify_game_mod_activation(existing);
 
-    require_contains(updated, "; keep me\n", "existing input must survive");
-    require_contains(
-        updated,
-        "[PalModSettings]\n"
-        "bGlobalEnableMod=True\n"
-        "ActiveModList=PalVerify\n",
-        "missing section must be appended"
-    );
+    require(updated == existing, "settings without the section must survive");
 }
 
 void steam_library_parser_decodes_vdf_paths()
@@ -232,13 +241,148 @@ void installer_copies_payload_and_creates_a_settings_backup()
     settings_stream.close();
     require_contains(
         installed_settings,
-        "bGlobalEnableMod=True\r\n",
-        "installed settings must enable mods"
+        "bGlobalEnableMod=False\r\n",
+        "installer must preserve the global mod setting"
     );
-    require_contains(
+    require_not_contains(
         installed_settings,
         "ActiveModList=PalVerify\r\n",
-        "installed settings must activate PalVerify"
+        "installer must not activate PalVerify in the game mod loader"
+    );
+
+    const auto resolved_test_root = std::filesystem::weakly_canonical(test_root);
+    const auto resolved_temp =
+        std::filesystem::weakly_canonical(
+            std::filesystem::temp_directory_path()
+        );
+    require(
+        resolved_test_root.string().starts_with(resolved_temp.string()),
+        "test cleanup must stay inside the temporary directory"
+    );
+    std::filesystem::remove_all(resolved_test_root);
+}
+
+[[nodiscard]] auto bytes(std::string_view text) -> std::vector<std::byte>
+{
+    const auto* first =
+        reinterpret_cast<const std::byte*>(text.data());
+    return {first, first + text.size()};
+}
+
+void sha256_matches_standard_vectors()
+{
+    require(
+        palverify::sha256_hex({}) ==
+            "e3b0c44298fc1c149afbf4c8996fb924"
+            "27ae41e4649b934ca495991b7852b855",
+        "empty SHA-256 vector must match FIPS 180-4"
+    );
+    const auto abc = bytes("abc");
+    require(
+        palverify::sha256_hex(abc) ==
+            "ba7816bf8f01cfea414140de5dae2223"
+            "b00361a396177a9cb410ff61f20015ad",
+        "abc SHA-256 vector must match FIPS 180-4"
+    );
+}
+
+void payload_archive_round_trips_and_rejects_tampering()
+{
+    std::vector<palverify::PayloadFile> source{
+        {
+            .relative_path = "Info.json",
+            .content = bytes("{\"PackageName\":\"PalVerify\"}"),
+            .sha256 = {},
+        },
+        {
+            .relative_path = "client/Scripts/main.lua",
+            .content = bytes("print('embedded')"),
+            .sha256 = {},
+        },
+    };
+
+    const auto packed = palverify::pack_payload_archive(source);
+    require(packed.success, "valid files must produce a compressed archive");
+    require(!packed.archive.empty(), "compressed archive must not be empty");
+
+    const auto unpacked = palverify::unpack_payload_archive(packed.archive);
+    require(unpacked.success, "valid compressed archive must unpack");
+    require(unpacked.files.size() == source.size(), "all files must round-trip");
+    require(
+        unpacked.files[1].content == source[1].content,
+        "payload bytes must survive compression"
+    );
+    require(
+        unpacked.files[1].sha256 ==
+            palverify::sha256_hex(source[1].content),
+        "archive must carry and verify each file SHA-256"
+    );
+
+    auto tampered = packed.archive;
+    tampered.back() ^= std::byte{0x01};
+    const auto rejected = palverify::unpack_payload_archive(tampered);
+    require(
+        !rejected.success,
+        "tampered compressed archive must be rejected"
+    );
+}
+
+void installer_rejects_hash_mismatch_before_writing_payload()
+{
+    const auto unique =
+        std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()
+        );
+    const auto test_root =
+        std::filesystem::temp_directory_path()
+        / ("palverify-embedded-hash-test-" + unique);
+    const auto game_root = test_root / "game";
+    std::filesystem::create_directories(
+        game_root / "Pal" / "Binaries" / "Win64"
+    );
+    {
+        std::ofstream executable{
+            game_root / "Pal" / "Binaries" / "Win64"
+                / "Palworld-Win64-Shipping.exe",
+            std::ios::binary,
+        };
+        executable << "fixture";
+    }
+
+    std::vector<palverify::PayloadFile> payload{
+        {
+            .relative_path = "Info.json",
+            .content = bytes("{\"PackageName\":\"PalVerify\"}"),
+            .sha256 = std::string(64, '0'),
+        },
+        {
+            .relative_path = "client/Scripts/main.lua",
+            .content = bytes("print('fixture')"),
+            .sha256 = palverify::sha256_hex(bytes("print('fixture')")),
+        },
+        {
+            .relative_path =
+                "client/Scripts/PalVerifyClient.exe",
+            .content = bytes("fixture"),
+            .sha256 = palverify::sha256_hex(bytes("fixture")),
+        },
+    };
+
+    const auto result = palverify::install_palverify_payload(
+        game_root,
+        std::span<const palverify::PayloadFile>{payload}
+    );
+
+    require(!result.success, "mismatched SHA-256 must fail installation");
+    require(
+        result.detail == "payload-hash-mismatch",
+        "hash mismatch must return a stable reason"
+    );
+    require(
+        !std::filesystem::exists(
+            game_root / "Mods" / "Workshop" / "PalVerify"
+        ),
+        "no payload file may be written after hash validation fails"
     );
 
     const auto resolved_test_root = std::filesystem::weakly_canonical(test_root);
@@ -312,13 +456,13 @@ auto main() -> int
 {
     const std::vector<TestCase> tests{
         {
-            "settings update preserves existing values",
-            settings_update_preserves_existing_values,
+            "settings update removes legacy PalVerify activation",
+            settings_update_removes_legacy_palverify_activation,
         },
         {"settings update is idempotent", settings_update_is_idempotent},
         {
-            "missing section is created without discarding input",
-            missing_section_is_created_without_discarding_input,
+            "missing section is left unchanged",
+            missing_section_is_left_unchanged,
         },
         {
             "Steam library parser decodes VDF paths",
@@ -327,6 +471,18 @@ auto main() -> int
         {
             "installer copies payload and backs up settings",
             installer_copies_payload_and_creates_a_settings_backup,
+        },
+        {
+            "SHA-256 matches standard vectors",
+            sha256_matches_standard_vectors,
+        },
+        {
+            "payload archive round-trips and rejects tampering",
+            payload_archive_round_trips_and_rejects_tampering,
+        },
+        {
+            "installer rejects payload hash mismatch before writing",
+            installer_rejects_hash_mismatch_before_writing_payload,
         },
         {
             "install discovery selects valid Steam library",

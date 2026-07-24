@@ -1,0 +1,8 @@
+{
+  "endpoint": "https://palworld-3-mien-website.vercel.app/api/palverify/v1/server/evaluate",
+  "serverToken": "replace-with-server-token",
+  "serverId": "bnb",
+  "restUrl": "http://127.0.0.1:17993",
+  "restToken": "replace-with-paldefender-token",
+  "intervalSeconds": 5
+}

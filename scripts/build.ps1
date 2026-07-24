@@ -11,6 +11,20 @@ if (-not (Test-Path -LiteralPath $cmake)) {
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $buildDirectory = Join-Path $projectRoot "build"
+$serverAgent = Join-Path $buildDirectory "Release\PalVerifyServer.exe"
+$coordinator = Join-Path `
+    $buildDirectory `
+    "palverify-coordinator-linux-amd64"
+
+Push-Location $projectRoot
+try {
+    go test ./...
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+} finally {
+    Pop-Location
+}
 
 & $cmake `
     -S $projectRoot `
@@ -32,6 +46,30 @@ if ($LASTEXITCODE -ne 0) {
     --target RUN_TESTS
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
+}
+
+go build -trimpath -o $serverAgent `
+    ./cmd/palverify-server
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+$previousGoos = $env:GOOS
+$previousGoarch = $env:GOARCH
+$previousCgo = $env:CGO_ENABLED
+try {
+    $env:GOOS = "linux"
+    $env:GOARCH = "amd64"
+    $env:CGO_ENABLED = "0"
+    go build -trimpath -o $coordinator `
+        ./cmd/palverify-coordinator
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+} finally {
+    $env:GOOS = $previousGoos
+    $env:GOARCH = $previousGoarch
+    $env:CGO_ENABLED = $previousCgo
 }
 
 npm test

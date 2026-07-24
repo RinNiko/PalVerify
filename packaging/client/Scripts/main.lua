@@ -38,5 +38,5 @@ local function start_client_agent()
     log("INFO", "Client observation agent requested.")
 end
 
-log("INFO", "Loading PalVerify client v0.2.0.")
+log("INFO", "Loading PalVerify client v1.0.")
 start_client_agent()

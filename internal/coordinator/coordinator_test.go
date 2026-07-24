@@ -1,0 +1,467 @@
+package coordinator
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func acceptReportForActivePlayer(
+	t *testing.T,
+	store *Store,
+	report Report,
+	now time.Time,
+) error {
+	t.Helper()
+	store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: report.UserID,
+		Name:   "Bao",
+	}}, now)
+	challenge, err := store.IssueChallenge("bnb", report.UserID, now)
+	if err != nil {
+		t.Fatalf("issue challenge: %v", err)
+	}
+	report.ServerID = "bnb"
+	report.ProtocolVersion = "3"
+	report.Challenge = challenge
+	return store.AcceptReport(report, now)
+}
+
+func TestEvaluateAllowsFreshWhitelistedPalVerifyReport(t *testing.T) {
+	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+		AllowedMods: map[string]AllowedMod{
+			"PalVerify": {
+				Version: "0.3.0",
+				Digest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	})
+
+	err := acceptReportForActivePlayer(t, store, Report{
+		UserID:   "steam_76561198317031083",
+		Sequence: 1,
+		SentAt:   now.Add(-time.Second),
+		Mods: []ReportedMod{{
+			ID:      "PalVerify",
+			Version: "0.3.0",
+			Digest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}},
+	}, now)
+	if err != nil {
+		t.Fatalf("accept report: %v", err)
+	}
+
+	result := store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: "steam_76561198317031083",
+		Name:   "Bao",
+	}}, now)
+
+	if len(result) != 1 || result[0].Action != ActionAllow {
+		t.Fatalf("expected allow, got %#v", result)
+	}
+}
+
+func TestEvaluateKicksUnknownModAndLogsOnlyCompactDescriptors(t *testing.T) {
+	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+		AllowedMods: map[string]AllowedMod{
+			"PalVerify": {
+				Version: "0.3.0",
+				Digest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	})
+
+	err := acceptReportForActivePlayer(t, store, Report{
+		UserID:   "steam_76561198317031083",
+		Sequence: 1,
+		SentAt:   now,
+		Mods: []ReportedMod{
+			{ID: "PalVerify", Version: "0.3.0", Digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+			{ID: "InfiniteStamina", Version: "1.0", Digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		},
+	}, now)
+	if err != nil {
+		t.Fatalf("accept report: %v", err)
+	}
+
+	result := store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: "steam_76561198317031083",
+		Name:   "Bao",
+	}}, now)
+
+	if len(result) != 1 || result[0].Action != ActionKick {
+		t.Fatalf("expected kick, got %#v", result)
+	}
+	if result[0].Reason != "UNAPPROVED_MOD" {
+		t.Fatalf("unexpected reason: %q", result[0].Reason)
+	}
+	if len(result[0].Mods) != 1 || result[0].Mods[0] != "InfiniteStamina" {
+		t.Fatalf("expected compact rejected mod id, got %#v", result[0].Mods)
+	}
+}
+
+func TestEvaluateKicksDetectedCheatRule(t *testing.T) {
+	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+		AllowedMods: map[string]AllowedMod{
+			"PalVerify": {
+				Version: "0.3.0",
+				Digest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	})
+
+	err := acceptReportForActivePlayer(t, store, Report{
+		UserID:   "steam_76561198317031083",
+		Sequence: 1,
+		SentAt:   now,
+		Mods: []ReportedMod{{
+			ID:      "PalVerify",
+			Version: "0.3.0",
+			Digest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}},
+		Violations: []string{"CHEAT_ENGINE_RUNNING"},
+	}, now)
+	if err != nil {
+		t.Fatalf("accept report: %v", err)
+	}
+
+	result := store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: "steam_76561198317031083",
+		Name:   "Bao",
+	}}, now)
+
+	if len(result) != 1 || result[0].Reason != "INTEGRITY_VIOLATION" {
+		t.Fatalf("expected integrity kick, got %#v", result)
+	}
+}
+
+func TestEvaluateWaitsThenKicksSteamWithoutReport(t *testing.T) {
+	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+		AllowedMods:  map[string]AllowedMod{},
+	})
+	players := []OnlinePlayer{{
+		UserID: "steam_76561198317031083",
+		Name:   "Bao",
+	}}
+
+	first := store.Evaluate("bnb", players, now)
+	if first[0].Action != ActionWait {
+		t.Fatalf("expected grace wait, got %#v", first)
+	}
+
+	expired := store.Evaluate("bnb", players, now.Add(20*time.Second))
+	if expired[0].Action != ActionKick ||
+		expired[0].Reason != "MISSING_PALVERIFY" {
+		t.Fatalf("expected missing-client kick, got %#v", expired)
+	}
+}
+
+func TestEvaluateDoesNotKickUnresolvedGDKPlatform(t *testing.T) {
+	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+		AllowedMods:  map[string]AllowedMod{},
+	})
+
+	result := store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: "gdk_2533274812345678",
+		Name:   "ConsoleOrGamePass",
+	}}, now)
+
+	if len(result) != 1 || result[0].Action != ActionObserve {
+		t.Fatalf("unresolved gdk must remain observation-only, got %#v", result)
+	}
+}
+
+func TestAcceptReportRejectsReplayAndOversizedInventory(t *testing.T) {
+	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+		AllowedMods:  map[string]AllowedMod{},
+	})
+	report := Report{
+		UserID:          "steam_76561198317031083",
+		ProtocolVersion: "3",
+		Sequence:        2,
+		SentAt:          now,
+	}
+	store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: report.UserID,
+		Name:   "Bao",
+	}}, now)
+	challenge, err := store.IssueChallenge("bnb", report.UserID, now)
+	if err != nil {
+		t.Fatalf("issue challenge: %v", err)
+	}
+	report.ServerID = "bnb"
+	report.Challenge = challenge
+	if err := store.AcceptReport(report, now); err != nil {
+		t.Fatalf("first report rejected: %v", err)
+	}
+	if err := store.AcceptReport(report, now); err == nil {
+		t.Fatal("replayed sequence accepted")
+	}
+
+	report.UserID = "steam_76561198000000000"
+	report.Mods = make([]ReportedMod, 65)
+	store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: report.UserID,
+		Name:   "Other",
+	}}, now)
+	challenge, err = store.IssueChallenge("bnb", report.UserID, now)
+	if err != nil {
+		t.Fatalf("issue second challenge: %v", err)
+	}
+	report.Challenge = challenge
+	if err := store.AcceptReport(report, now); err == nil {
+		t.Fatal("oversized mod inventory accepted")
+	}
+}
+
+func TestActiveSessionChallengeIsRequiredAndSingleUse(t *testing.T) {
+	now := time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:     20 * time.Second,
+		ReportMaxAge:    15 * time.Second,
+		ChallengeMaxAge: 15 * time.Second,
+		AllowedMods: map[string]AllowedMod{
+			"PalVerify": {
+				Version: "0.5.0",
+				Digest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	})
+	player := OnlinePlayer{
+		UserID: "steam_76561198317031083",
+		Name:   "Bao",
+	}
+
+	if _, err := store.IssueChallenge("bnb", player.UserID, now); err == nil {
+		t.Fatal("offline player received a challenge")
+	}
+
+	store.Evaluate("bnb", []OnlinePlayer{player}, now)
+	challenge, err := store.IssueChallenge("bnb", player.UserID, now)
+	if err != nil || challenge == "" {
+		t.Fatalf("active player challenge: %q, %v", challenge, err)
+	}
+
+	report := Report{
+		ServerID:        "bnb",
+		UserID:          player.UserID,
+		ProtocolVersion: "3",
+		Challenge:       challenge,
+		Sequence:        1,
+		SentAt:          now,
+		Mods: []ReportedMod{{
+			ID:      "PalVerify",
+			Version: "0.5.0",
+			Digest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}},
+	}
+	if err := store.AcceptReport(report, now); err != nil {
+		t.Fatalf("active challenge report rejected: %v", err)
+	}
+	if err := store.AcceptReport(report, now); err == nil {
+		t.Fatal("single-use challenge was replayed")
+	}
+
+	decisions := store.Evaluate("bnb", []OnlinePlayer{player}, now)
+	if len(decisions) != 1 || decisions[0].Action != ActionAllow {
+		t.Fatalf("challenge-bound report did not allow player: %#v", decisions)
+	}
+}
+
+func TestHTTPHandlerUsesSessionChallengeAndProtectsServerCredential(t *testing.T) {
+	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:     20 * time.Second,
+		ReportMaxAge:    15 * time.Second,
+		ChallengeMaxAge: 15 * time.Second,
+		AllowedMods: map[string]AllowedMod{
+			"PalVerify": {
+				Version: "0.5.0",
+				Digest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	})
+	handler := NewHandler(
+		store,
+		"server-token",
+		func() time.Time { return now },
+		nil,
+	)
+
+	evaluateRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/server/evaluate",
+		strings.NewReader(`{
+			"serverId":"bnb",
+			"sentAt":"2026-07-24T07:00:00Z",
+			"players":[
+				{"userId":"steam_76561198317031083","name":"Bao"}
+			]
+		}`),
+	)
+	evaluateRequest.Header.Set("Authorization", "Bearer server-token")
+	evaluateRequest.Header.Set("Content-Type", "application/json")
+	evaluateResponse := httptest.NewRecorder()
+	handler.ServeHTTP(evaluateResponse, evaluateRequest)
+	if evaluateResponse.Code != http.StatusOK {
+		t.Fatalf("evaluate status: %d", evaluateResponse.Code)
+	}
+
+	challengeRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/client/challenge",
+		strings.NewReader(`{
+			"serverId":"bnb",
+			"userId":"steam_76561198317031083"
+		}`),
+	)
+	challengeRequest.Header.Set("Content-Type", "application/json")
+	challengeResult := httptest.NewRecorder()
+	handler.ServeHTTP(challengeResult, challengeRequest)
+	if challengeResult.Code != http.StatusOK {
+		t.Fatalf("challenge status: %d", challengeResult.Code)
+	}
+	var challengeBody challengeResponse
+	if err := json.NewDecoder(challengeResult.Body).Decode(
+		&challengeBody,
+	); err != nil || challengeBody.Challenge == "" {
+		t.Fatalf("decode challenge: %#v, %v", challengeBody, err)
+	}
+
+	reportBody := `{
+		"serverId":"bnb",
+		"userId":"steam_76561198317031083",
+		"protocolVersion":"3",
+		"challenge":"` + challengeBody.Challenge + `",
+		"sequence":1,
+		"sentAt":"2026-07-24T06:59:59Z",
+		"mods":[
+			{"id":"PalVerify","version":"0.5.0","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+		],
+		"violations":[]
+	}`
+	reportRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/client/report",
+		strings.NewReader(reportBody),
+	)
+	reportRequest.Header.Set("Content-Type", "application/json")
+	reportResponse := httptest.NewRecorder()
+	handler.ServeHTTP(reportResponse, reportRequest)
+	if reportResponse.Code != http.StatusAccepted {
+		t.Fatalf("report status: %d", reportResponse.Code)
+	}
+
+	evaluateRequest = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/server/evaluate",
+		strings.NewReader(`{
+			"serverId":"bnb",
+			"sentAt":"2026-07-24T07:00:00Z",
+			"players":[
+				{"userId":"steam_76561198317031083","name":"Bao"}
+			]
+		}`),
+	)
+	evaluateRequest.Header.Set("Authorization", "Bearer server-token")
+	evaluateRequest.Header.Set("Content-Type", "application/json")
+	evaluateResponse = httptest.NewRecorder()
+	handler.ServeHTTP(evaluateResponse, evaluateRequest)
+
+	var body struct {
+		Decisions []Decision `json:"decisions"`
+	}
+	if err := json.NewDecoder(evaluateResponse.Body).Decode(&body); err != nil {
+		t.Fatalf("decode evaluate response: %v", err)
+	}
+	if len(body.Decisions) != 1 || body.Decisions[0].Action != ActionAllow {
+		t.Fatalf("unexpected decisions: %#v", body.Decisions)
+	}
+
+	wrongCredential := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/server/evaluate",
+		strings.NewReader(`{"serverId":"bnb","players":[]}`),
+	)
+	wrongCredential.Header.Set("Authorization", "Bearer public-client")
+	wrongCredential.Header.Set("Content-Type", "application/json")
+	wrongResponse := httptest.NewRecorder()
+	handler.ServeHTTP(wrongResponse, wrongCredential)
+	if wrongResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("public client reached server API: %d", wrongResponse.Code)
+	}
+}
+
+func TestLauncherManifestEndpointPublishesRequiredVersions(t *testing.T) {
+	store := NewStore(Config{
+		AllowedMods: map[string]AllowedMod{},
+		LauncherManifest: LauncherManifest{
+			LauncherVersion:         "0.5.0",
+			MinimumLauncherVersion:  "0.5.0",
+			LauncherDownloadURL:     "https://downloads.minerua.net/Pal3Mien-setup.exe",
+			LauncherSHA256:          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			PalVerifyVersion:        "0.5.0",
+			RequiredPalworldBuildID: "24181527",
+			PalworldVersion:         "v1.0.1.100619",
+			ServerOnline:            true,
+			ServerAddress:           "lantica.dathost.net:28709",
+			WebsiteURL:              "https://minerua.net/",
+			NewsURL:                 "https://minerua.net/tin-tuc",
+		},
+	})
+	handler := NewHandler(
+		store,
+		"server-token",
+		time.Now,
+		nil,
+	)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/launcher/manifest",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("manifest status: %d", response.Code)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf(
+			"manifest must not be cached: %q",
+			response.Header().Get("Cache-Control"),
+		)
+	}
+	var manifest LauncherManifest
+	if err := json.NewDecoder(response.Body).Decode(&manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if manifest.RequiredPalworldBuildID != "24181527" ||
+		manifest.PalVerifyVersion != "0.5.0" ||
+		manifest.ServerAddress != "lantica.dathost.net:28709" ||
+		!manifest.ServerOnline {
+		t.Fatalf("unexpected manifest: %#v", manifest)
+	}
+}

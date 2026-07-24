@@ -1,4 +1,5 @@
 #include "palverify/platform_policy.hpp"
+#include "palverify/mod_policy.hpp"
 #include "palverify/process_rules.hpp"
 #include "palverify/session_guard.hpp"
 
@@ -344,6 +345,164 @@ void known_cheat_processes_emit_minimized_rule_ids()
     );
 }
 
+void optimized_cheat_engine_binary_emits_rule_id()
+{
+    const std::vector<std::string_view> process_images{
+        "cheatengine-x86_64-SSE4-AVX2.exe",
+    };
+
+    const auto rules = palverify::detect_process_rules(process_images);
+    require_equal(
+        rules.size(),
+        std::size_t{1},
+        "optimized Cheat Engine binary must be detected"
+    );
+    require_equal(
+        rules[0],
+        palverify::ProcessRuleId::CheatEngineRunning,
+        "optimized Cheat Engine rule"
+    );
+}
+
+void renamed_cheat_engine_uses_pe_metadata()
+{
+    const std::vector<palverify::ProcessEvidence> processes{
+        {
+            .image_name = "totally-normal.exe",
+            .file_description = "Cheat Engine",
+            .company_name = "Cheat Engine",
+        },
+    };
+
+    const auto rules = palverify::detect_process_rules(processes);
+    require_equal(
+        rules.size(),
+        std::size_t{1},
+        "renamed Cheat Engine must be detected from PE metadata"
+    );
+    require_equal(
+        rules[0],
+        palverify::ProcessRuleId::CheatEngineRunning,
+        "renamed Cheat Engine rule"
+    );
+}
+
+void renamed_cheat_engine_uses_trusted_publisher()
+{
+    const std::vector<palverify::ProcessEvidence> processes{
+        {
+            .image_name = "totally-normal.exe",
+            .signer_name = "Cheat Engine EZ",
+            .signature_valid = true,
+        },
+    };
+
+    const auto rules = palverify::detect_process_rules(processes);
+    require_equal(
+        rules.size(),
+        std::size_t{1},
+        "renamed Cheat Engine must be detected from its trusted publisher"
+    );
+    require_equal(
+        rules[0],
+        palverify::ProcessRuleId::CheatEngineRunning,
+        "trusted Cheat Engine publisher rule"
+    );
+}
+
+void renamed_cheat_engine_uses_known_file_hash()
+{
+    const std::vector<palverify::ProcessEvidence> processes{
+        {
+            .image_name = "totally-normal.exe",
+            .sha256 =
+                "9d861d651ab9d1dc3c09ae34c8ed5dee"
+                "3d1a29b080784c3c48773494c9350230",
+        },
+    };
+
+    const auto rules = palverify::detect_process_rules(processes);
+    require_equal(
+        rules.size(),
+        std::size_t{1},
+        "renamed Cheat Engine must be detected from its file hash"
+    );
+    require_equal(
+        rules[0],
+        palverify::ProcessRuleId::CheatEngineRunning,
+        "known Cheat Engine hash rule"
+    );
+}
+
+void renamed_wemod_uses_pe_metadata()
+{
+    const std::vector<palverify::ProcessEvidence> processes{
+        {
+            .image_name = "totally-normal.exe",
+            .file_description = "WeMod - Cheats and Mods",
+            .company_name = "WeMod",
+        },
+    };
+
+    const auto rules = palverify::detect_process_rules(processes);
+    require_equal(
+        rules.size(),
+        std::size_t{1},
+        "renamed WeMod must be detected from PE metadata"
+    );
+    require_equal(
+        rules[0],
+        palverify::ProcessRuleId::WeModRunning,
+        "renamed WeMod rule"
+    );
+}
+
+void current_wand_uses_process_identity()
+{
+    const std::vector<palverify::ProcessEvidence> processes{
+        {
+            .image_name = "Wand.exe",
+            .file_description = "Wand",
+            .company_name = "WeMod",
+        },
+    };
+
+    const auto rules = palverify::detect_process_rules(processes);
+    require_equal(
+        rules.size(),
+        std::size_t{1},
+        "current Wand process must be detected"
+    );
+    require_equal(
+        rules[0],
+        palverify::ProcessRuleId::WeModRunning,
+        "current Wand process rule"
+    );
+}
+
+void renamed_wand_uses_trusted_publisher()
+{
+    const std::vector<palverify::ProcessEvidence> processes{
+        {
+            .image_name = "totally-normal.exe",
+            .signer_name = "WeMod LLC",
+            .signature_valid = true,
+        },
+    };
+
+    const auto rules = palverify::detect_process_rules(processes);
+    require_equal(
+        rules.size(),
+        std::size_t{1},
+        "renamed Wand must be detected from its trusted publisher"
+    );
+    require_equal(
+        rules[0],
+        palverify::ProcessRuleId::WeModRunning,
+        "trusted Wand publisher rule"
+    );
+}
+
 void process_rules_use_exact_names_to_avoid_substring_false_positives()
 {
     const std::vector<std::string_view> process_images{
@@ -355,6 +514,90 @@ void process_rules_use_exact_names_to_avoid_substring_false_positives()
     require(
         palverify::detect_process_rules(process_images).empty(),
         "unrelated substring matches must not trigger"
+    );
+
+    const std::vector<palverify::ProcessEvidence> processes{
+        {
+            .image_name = "CheatEngineGuide.exe",
+            .file_description = "Cheat Engine User Guide",
+            .company_name = "Example Company",
+            .signer_name = "Cheat Engine EZ",
+            .sha256 = "not-a-known-hash",
+            .signature_valid = false,
+        },
+    };
+    require(
+        palverify::detect_process_rules(processes).empty(),
+        "partial metadata and an untrusted signer must not trigger"
+    );
+}
+
+void exact_mod_whitelist_accepts_only_approved_package_hash()
+{
+    const std::vector<palverify::AllowedMod> whitelist{
+        {
+            .id = "PalVerify",
+            .version = "0.3.0",
+            .digest = "approved",
+        },
+    };
+    const std::vector<palverify::ReportedMod> reported{
+        {
+            .id = "PalVerify",
+            .version = "0.3.0",
+            .digest = "approved",
+        },
+    };
+
+    require(
+        palverify::evaluate_mod_whitelist(reported, whitelist).empty(),
+        "exact approved PalVerify package should pass"
+    );
+}
+
+void unknown_or_modified_mod_is_rejected_with_compact_id()
+{
+    const std::vector<palverify::AllowedMod> whitelist{
+        {
+            .id = "PalVerify",
+            .version = "0.3.0",
+            .digest = "approved",
+        },
+    };
+
+    const auto modified = palverify::evaluate_mod_whitelist(
+        {{
+            .id = "PalVerify",
+            .version = "0.3.0",
+            .digest = "modified",
+        }},
+        whitelist
+    );
+    require_equal(
+        modified,
+        std::vector<std::string>{"PalVerify"},
+        "modified PalVerify package must be rejected"
+    );
+
+    const auto unknown = palverify::evaluate_mod_whitelist(
+        {
+            {
+                .id = "PalVerify",
+                .version = "0.3.0",
+                .digest = "approved",
+            },
+            {
+                .id = "InfiniteStamina",
+                .version = "1",
+                .digest = "bad",
+            },
+        },
+        whitelist
+    );
+    require_equal(
+        unknown,
+        std::vector<std::string>{"InfiniteStamina"},
+        "unknown mod log should contain only compact package id"
     );
 }
 
@@ -397,8 +640,44 @@ auto main() -> int
             known_cheat_processes_emit_minimized_rule_ids,
         },
         {
+            "optimized Cheat Engine binary emits rule ID",
+            optimized_cheat_engine_binary_emits_rule_id,
+        },
+        {
+            "renamed Cheat Engine uses PE metadata",
+            renamed_cheat_engine_uses_pe_metadata,
+        },
+        {
+            "renamed Cheat Engine uses trusted publisher",
+            renamed_cheat_engine_uses_trusted_publisher,
+        },
+        {
+            "renamed Cheat Engine uses known file hash",
+            renamed_cheat_engine_uses_known_file_hash,
+        },
+        {
+            "renamed WeMod uses PE metadata",
+            renamed_wemod_uses_pe_metadata,
+        },
+        {
+            "current Wand uses process identity",
+            current_wand_uses_process_identity,
+        },
+        {
+            "renamed Wand uses trusted publisher",
+            renamed_wand_uses_trusted_publisher,
+        },
+        {
             "process rules avoid substring false positives",
             process_rules_use_exact_names_to_avoid_substring_false_positives,
+        },
+        {
+            "exact mod whitelist accepts approved hash",
+            exact_mod_whitelist_accepts_only_approved_package_hash,
+        },
+        {
+            "unknown or modified mods are rejected",
+            unknown_or_modified_mod_is_rejected_with_compact_id,
         },
     };
 

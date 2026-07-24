@@ -3,14 +3,17 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $buildRoot = Join-Path $projectRoot "build\Release"
 $distRoot = Join-Path $projectRoot "dist"
-$releaseName = "PalVerify_Windows_v0.2.0"
+$version = (Get-Content -Raw `
+    -LiteralPath (Join-Path $projectRoot "package.json") |
+    ConvertFrom-Json).version
+$releaseName = "PalVerify_Windows_v$version"
 $releaseRoot = Join-Path $distRoot $releaseName
-$payloadRoot = Join-Path $releaseRoot "payload"
-$serverStage = Join-Path $distRoot "PalVerify_Server_Observation_v0.2.0"
+$serverStage = Join-Path $distRoot "PalVerify_Server_v$version"
 
-$launcher = Join-Path $buildRoot "PalVerifyLauncher.exe"
+$launcher = Join-Path $buildRoot "Pal3Mien.exe"
 $clientAgent = Join-Path $buildRoot "PalVerifyClient.exe"
-foreach ($required in @($launcher, $clientAgent)) {
+$serverAgent = Join-Path $buildRoot "PalVerifyServer.exe"
+foreach ($required in @($launcher, $clientAgent, $serverAgent)) {
     if (-not (Test-Path -LiteralPath $required)) {
         throw "Missing build artifact: $required"
     }
@@ -30,31 +33,6 @@ foreach ($target in @($releaseRoot, $serverStage)) {
     }
 }
 
-New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
-Copy-Item -LiteralPath $launcher -Destination $releaseRoot
-Copy-Item `
-    -LiteralPath (Join-Path $projectRoot "release\README.txt") `
-    -Destination $releaseRoot
-Copy-Item `
-    -LiteralPath (Join-Path $projectRoot "packaging\Info.json") `
-    -Destination $payloadRoot
-Copy-Item `
-    -LiteralPath (Join-Path $projectRoot "packaging\thumbnail.png") `
-    -Destination $payloadRoot
-Copy-Item `
-    -LiteralPath (Join-Path $projectRoot "packaging\client") `
-    -Destination $payloadRoot `
-    -Recurse
-Copy-Item `
-    -LiteralPath $clientAgent `
-    -Destination (Join-Path $payloadRoot "client\Scripts")
-
-New-Item -ItemType Directory -Path $serverStage -Force | Out-Null
-Copy-Item `
-    -LiteralPath (Join-Path $projectRoot "packaging\server") `
-    -Destination (Join-Path $serverStage "PalVerify") `
-    -Recurse
-
 $certificate = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
     Where-Object { $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) } |
     Sort-Object NotAfter -Descending |
@@ -69,10 +47,7 @@ $signTool = Get-ChildItem `
     Select-Object -First 1
 
 if ($certificate -and $signTool) {
-    foreach ($executable in @(
-        (Join-Path $releaseRoot "PalVerifyLauncher.exe"),
-        (Join-Path $payloadRoot "client\Scripts\PalVerifyClient.exe")
-    )) {
+    foreach ($executable in @($clientAgent, $serverAgent)) {
         & $signTool.FullName sign `
             /sha1 $certificate.Thumbprint `
             /fd SHA256 `
@@ -83,10 +58,119 @@ if ($certificate -and $signTool) {
             throw "Authenticode signing failed: $executable"
         }
     }
+}
+
+$cmake = Join-Path `
+    "C:\Program Files\Microsoft Visual Studio\2022\Community" `
+    "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+if (-not (Test-Path -LiteralPath $cmake)) {
+    throw "Visual Studio 2022 bundled CMake was not found: $cmake"
+}
+& $cmake `
+    --build (Join-Path $projectRoot "build") `
+    --config Release `
+    --target Pal3Mien
+if ($LASTEXITCODE -ne 0) {
+    throw "Pal3Mien rebuild with embedded payload failed."
+}
+
+if ($certificate -and $signTool) {
+    & $signTool.FullName sign `
+        /sha1 $certificate.Thumbprint `
+        /fd SHA256 `
+        /td SHA256 `
+        /tr "http://timestamp.digicert.com" `
+        $launcher
+    if ($LASTEXITCODE -ne 0) {
+        throw "Authenticode signing failed: $launcher"
+    }
     "AUTHENTICODE_SIGNED subject=$($certificate.Subject)"
 } else {
     "AUTHENTICODE_UNSIGNED reason=no-valid-code-signing-certificate"
 }
+
+$packagePaths = @{
+    "Info.json" = Join-Path $projectRoot "packaging\Info.json"
+    "thumbnail.png" = Join-Path $projectRoot "packaging\thumbnail.png"
+    "client/README.md" = Join-Path $projectRoot "packaging\client\README.md"
+    "client/enabled.txt" = Join-Path $projectRoot "packaging\client\enabled.txt"
+    "client/Scripts/config.json" = Join-Path `
+        $projectRoot `
+        "packaging\client\Scripts\config.json"
+    "client/Scripts/main.lua" = Join-Path `
+        $projectRoot `
+        "packaging\client\Scripts\main.lua"
+    "client/Scripts/PalVerifyClient.exe" = $clientAgent
+}
+$packageRelativePaths = [string[]]$packagePaths.Keys
+[Array]::Sort($packageRelativePaths, [StringComparer]::Ordinal)
+$packageHash = [Security.Cryptography.IncrementalHash]::CreateHash(
+    [Security.Cryptography.HashAlgorithmName]::SHA256
+)
+foreach ($relativePath in $packageRelativePaths) {
+    $fileDigest = (
+        Get-FileHash `
+            -LiteralPath $packagePaths[$relativePath] `
+            -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    $packageHash.AppendData(
+        [Text.Encoding]::UTF8.GetBytes($relativePath)
+    )
+    $packageHash.AppendData([byte[]](0))
+    $packageHash.AppendData(
+        [Text.Encoding]::ASCII.GetBytes($fileDigest)
+    )
+    $packageHash.AppendData([byte[]](0))
+}
+$packageDigest = (
+    [BitConverter]::ToString($packageHash.GetHashAndReset()) -replace "-", ""
+).ToLowerInvariant()
+$releaseManifestPath = Join-Path `
+    $projectRoot `
+    "release\palverify-launcher-manifest.json"
+$releaseManifest = Get-Content `
+    -Raw `
+    -Encoding utf8 `
+    -LiteralPath $releaseManifestPath |
+    ConvertFrom-Json
+if ($releaseManifest.palVerifyPackageDigest -cne $packageDigest) {
+    throw (
+        "Release manifest palVerifyPackageDigest does not match payload. " +
+        "expected=$packageDigest " +
+        "actual=$($releaseManifest.palVerifyPackageDigest)"
+    )
+}
+"PACKAGE_DIGEST=$packageDigest"
+
+New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
+Copy-Item -LiteralPath $launcher -Destination $releaseRoot
+Copy-Item `
+    -LiteralPath (Join-Path $projectRoot "release\README.txt") `
+    -Destination $releaseRoot
+
+New-Item -ItemType Directory -Path $serverStage -Force | Out-Null
+Copy-Item `
+    -LiteralPath (Join-Path $projectRoot "packaging\server") `
+    -Destination (Join-Path $serverStage "PalVerify") `
+    -Recurse
+Copy-Item `
+    -LiteralPath $serverAgent `
+    -Destination (Join-Path $serverStage "PalVerify\Scripts")
+
+$forbiddenReleaseFiles = @(
+    Get-ChildItem -LiteralPath $releaseRoot -Recurse -Force |
+        Where-Object {
+            $_.Extension -ieq ".pdb" -or
+            ($_.PSIsContainer -and $_.Name -ieq "payload")
+        }
+)
+if ($forbiddenReleaseFiles.Count -ne 0) {
+    throw (
+        "Release layout contains forbidden payload/PDB paths: " +
+        ($forbiddenReleaseFiles.FullName -join ", ")
+    )
+}
+"RELEASE_LAYOUT_OK no-external-payload no-pdb"
 
 $hashTargets = Get-ChildItem -LiteralPath $releaseRoot -File -Recurse |
     Where-Object { $_.Name -ne "SHA256SUMS.txt" } |

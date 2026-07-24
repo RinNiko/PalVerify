@@ -1,65 +1,49 @@
 # Project State
 
-## Project Reference
+## Current release
 
-See: `.planning/PROJECT.md` (updated 2026-07-24)
+- Pal3Mien Launcher: `v1.0`
+- PalVerify client/server: `v1.0`
+- Palworld build: `24181527` (`v1.0.1.100619`)
+- Public repository: `https://github.com/RinNiko/PalVerify`
+- Permanent installer URL:
+  `https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe`
+- Installer SHA-256:
+  `67e1e685719b14de8e64d87939ec87601b8c6334164a621c74295f3314baa306`
+- PalVerify package digest:
+  `9b90101710eff6fc050ffb1fbdaa4f59dfcf8872c20fb6a90cb3f05abcefdd58`
 
-**Core value:** Required PC and Mac clients cannot remain connected without a
-current PalVerify session, while real Xbox consoles and PS5 retain crossplay.
+## Production state
 
-**Current focus:** Phase 3 - Live Per-Connection Platform Adapter
+- The public GitHub repository contains only `README.md` and
+  `palverify-launcher-manifest.json`.
+- GitHub has one permanent release tagged `stable` with one asset:
+  `Pal3Mien-Setup.exe`.
+- The Palworld 3 Miền API accepts official two-part versions such as `1.0`,
+  treats `1.0` and `1.0.0` as equal, and synchronizes the GitHub manifest.
+- Production API change merged in `PalworldVN/Palworld-3-Mien-Website#2` and
+  Vercel deployment `dpl_Eh4tjj5sbGRpAB6xXQ2QSaragc3H` is ready.
+- PalVerifyServer v1.0 and `config.lua` v1.0 were uploaded to BNB over FTP.
+  Remote round-trip SHA-256 matches the local artifacts.
+- `server-config.json` points to the Palworld 3 Miền production API instead of
+  the retired MineRua coordinator.
+- The v1.0 GitHub manifest remains fail-safe with `serverOnline: false` until
+  BNB is restarted and startup/evaluation logs confirm the new runtime.
 
-## Status
+## Verification
 
-- Project initialized and committed.
-- Pure C++ platform/session core implemented through observed RED-GREEN TDD.
-- Release build passes 13 C++ tests with MSVC warnings treated as errors.
-- Windows process scanning compiles with exact-name WeMod and Cheat Engine rules
-  that return only minimized rule identifiers.
-- Windows launcher and client agent v0.2.0 build with MSVC `/W4 /WX`; installer
-  discovery, VDF parsing, settings preservation, payload installation, and
-  client probe smoke tests pass.
-- Launcher installed the client payload into the active Steam Palworld
-  installation and created the first-install settings backup.
-- Lua symbol filter passes 4 tests and the observation probe parses cleanly.
-- Official package metadata resolves every target and thumbnail.
-- Windows and server-observation release ZIPs are reproducibly packaged with
-  SHA-256 output. Defender command-line scans reported no detections.
-- Per-user NSIS and MSI installers build reproducibly with NSIS 3.12 and WiX
-  5.0.2. Both formats were installed, payload-hash verified, used to run the
-  launcher, and uninstalled successfully; the NSIS build is installed on the
-  current machine.
-- BNB DatHost has timestamped `mods.txt` and `mods.json` backups, the PalVerify
-  server probe enabled in both lists, and all uploaded files were downloaded
-  and SHA-256 verified.
-- DatHost was stopped and started with zero players online. UE4SS confirmed
-  PalVerify v0.2.0 loaded and completed its observation probe with enforcement
-  and PII collection disabled.
-- Palworld zDev runtime artifact was downloaded and SHA-256 verified.
-- Native UE4SS source build requires GitHub access to Epic-licensed UEPseudo;
-  the lifecycle source scaffold is present but cannot be compiled in this
-  environment without that access.
-- Runtime candidate symbols are now confirmed, but per-connection platform
-  values remain unverified.
-- The release is unsigned because no trusted code-signing certificate is
-  installed on this machine; SmartScreen reputation warnings cannot be
-  guaranteed away without a trusted signing certificate and reputation.
+- Go coordinator/server tests pass.
+- C++ build passes with `/W4 /WX`.
+- Five CTest executables pass.
+- Lua client/server probe tests pass.
+- Windows installer package contract passes.
+- NSIS produces the single fixed-name installer `Pal3Mien-Setup.exe`.
+- Release layout contains no external `payload` directory and no PDB files.
+- Authenticode remains unsigned because no valid code-signing certificate is
+  installed on this machine.
 
-## Decisions
+## Next action
 
-- Exempt exact Xbox console models and PS5 only.
-- Require Steam Windows, WinGDK/Game Pass PC, Linux, and Mac.
-- Unknown platforms fail closed.
-- Keep runtime adapter values outside the pure core.
-- Start enforcement in observation mode.
-
-## Next Evidence Needed
-
-1. Determine whether `PalPlayerState.SyncPlayerPlatformCache`,
-   `OverridePlayerPlatform`, or `PlayerController.GetPlatformUserId` exposes a
-   server-authenticated per-player platform value.
-2. Capture those values during real connections without logging account or
-   platform identifiers.
-3. Implement and authenticate connection-bound client reporting.
-4. Test real Steam, WinGDK, Linux, Mac, Xbox console, and PS5 sessions before
-   enabling any kick action.
+Restart BNB, verify `server agent started version=1.0` and successful
+Palworld 3 Miền API evaluations, then publish the same v1.0 manifest with
+`serverOnline: true`.

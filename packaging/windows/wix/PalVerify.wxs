@@ -21,7 +21,7 @@
             Guid="*">
             <File
               Id="LauncherFile"
-              Source="$(var.SourceRoot)\PalVerifyLauncher.exe"
+              Source="$(var.SourceRoot)\Pal3Mien.exe"
               KeyPath="yes" />
           </Component>
           <Component
@@ -40,63 +40,6 @@
               Source="$(var.SourceRoot)\SHA256SUMS.txt"
               KeyPath="yes" />
           </Component>
-
-          <Directory Id="PayloadFolder" Name="payload">
-            <Component
-              Id="InfoComponent"
-              Guid="*">
-              <File
-                Id="InfoFile"
-                Source="$(var.SourceRoot)\payload\Info.json"
-                KeyPath="yes" />
-            </Component>
-            <Component
-              Id="ThumbnailComponent"
-              Guid="*">
-              <File
-                Id="ThumbnailFile"
-                Source="$(var.SourceRoot)\payload\thumbnail.png"
-                KeyPath="yes" />
-            </Component>
-
-            <Directory Id="ClientFolder" Name="client">
-              <Component
-                Id="ClientReadmeComponent"
-                Guid="*">
-                <File
-                  Id="ClientReadmeFile"
-                  Source="$(var.SourceRoot)\payload\client\README.md"
-                  KeyPath="yes" />
-              </Component>
-              <Component
-                Id="ClientEnabledComponent"
-                Guid="*">
-                <File
-                  Id="ClientEnabledFile"
-                  Source="$(var.SourceRoot)\payload\client\enabled.txt"
-                  KeyPath="yes" />
-              </Component>
-
-              <Directory Id="ClientScriptsFolder" Name="Scripts">
-                <Component
-                  Id="ClientMainComponent"
-                  Guid="*">
-                  <File
-                    Id="ClientMainFile"
-                    Source="$(var.SourceRoot)\payload\client\Scripts\main.lua"
-                    KeyPath="yes" />
-                </Component>
-                <Component
-                  Id="ClientAgentComponent"
-                  Guid="*">
-                  <File
-                    Id="ClientAgentFile"
-                    Source="$(var.SourceRoot)\payload\client\Scripts\PalVerifyClient.exe"
-                    KeyPath="yes" />
-                </Component>
-              </Directory>
-            </Directory>
-          </Directory>
         </Directory>
       </Directory>
     </StandardDirectory>
@@ -108,9 +51,9 @@
           Guid="*">
           <Shortcut
             Id="StartMenuShortcut"
-            Name="PalVerify Launcher"
+            Name="Palworld 3 Mien"
             Description="Install or update the PalVerify Palworld client mod"
-            Target="[INSTALLFOLDER]PalVerifyLauncher.exe"
+            Target="[INSTALLFOLDER]Pal3Mien.exe"
             WorkingDirectory="INSTALLFOLDER" />
           <RemoveFolder
             Id="RemoveApplicationProgramsFolder"
@@ -130,12 +73,6 @@
       <ComponentRef Id="LauncherComponent" />
       <ComponentRef Id="ReadmeComponent" />
       <ComponentRef Id="HashManifestComponent" />
-      <ComponentRef Id="InfoComponent" />
-      <ComponentRef Id="ThumbnailComponent" />
-      <ComponentRef Id="ClientReadmeComponent" />
-      <ComponentRef Id="ClientEnabledComponent" />
-      <ComponentRef Id="ClientMainComponent" />
-      <ComponentRef Id="ClientAgentComponent" />
       <ComponentRef Id="StartMenuShortcutComponent" />
     </Feature>
   </Package>
