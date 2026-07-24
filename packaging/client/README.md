@@ -1,8 +1,12 @@
-# PalVerify client placeholder
+# PalVerify client
 
-The client package is intentionally not publishable yet. It will contain the
-native challenge/heartbeat adapter after the connection-bound transport is
-validated.
+The Windows package starts `PalVerifyClient.exe` through UE4SS. The agent scans
+running process image names locally and records only stable PalVerify rule IDs
+under `%LOCALAPPDATA%\PalVerify\PalVerifyClient.log`.
 
-Mac is not exempt: a Mac connection must fail verification until a compatible
-Mac client adapter is shipped.
+Version 0.2.0 remains observation-only: it does not transmit findings or prove a
+server session yet. The connection-bound transport must be validated before
+mandatory server kicks are enabled.
+
+Mac is not exempt by policy, but a compatible Mac client adapter has not been
+shipped yet.

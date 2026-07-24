@@ -4,7 +4,7 @@
   "private": true,
   "description": "Client/server verification and anti-cheat mod for Palworld",
   "scripts": {
-    "test:probe": "fengari tests/probe_tests.lua"
+    "test:probe": "fengari tests/probe_tests.lua && fengari tests/client_probe_tests.lua"
   },
   "devDependencies": {
     "fengari-node-cli": "0.1.0"

@@ -1,5 +1,5 @@
 return {
-    version = "0.1.0-dev",
+    version = "0.2.0",
     startup_delay_ms = 5000,
     observation_only = true,
     classes = {

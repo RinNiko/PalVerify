@@ -7,7 +7,7 @@ See: `.planning/PROJECT.md` (updated 2026-07-24)
 **Core value:** Required PC and Mac clients cannot remain connected without a
 current PalVerify session, while real Xbox consoles and PS5 retain crossplay.
 
-**Current focus:** Phase 2 - Server Observation Adapter
+**Current focus:** Phase 3 - Live Per-Connection Platform Adapter
 
 ## Status
 
@@ -16,13 +16,30 @@ current PalVerify session, while real Xbox consoles and PS5 retain crossplay.
 - Release build passes 13 C++ tests with MSVC warnings treated as errors.
 - Windows process scanning compiles with exact-name WeMod and Cheat Engine rules
   that return only minimized rule identifiers.
+- Windows launcher and client agent v0.2.0 build with MSVC `/W4 /WX`; installer
+  discovery, VDF parsing, settings preservation, payload installation, and
+  client probe smoke tests pass.
+- Launcher installed the client payload into the active Steam Palworld
+  installation and created the first-install settings backup.
 - Lua symbol filter passes 4 tests and the observation probe parses cleanly.
 - Official package metadata resolves every target and thumbnail.
+- Windows and server-observation release ZIPs are reproducibly packaged with
+  SHA-256 output. Defender command-line scans reported no detections.
+- BNB DatHost has timestamped `mods.txt` and `mods.json` backups, the PalVerify
+  server probe enabled in both lists, and all uploaded files were downloaded
+  and SHA-256 verified.
+- DatHost was stopped and started with zero players online. UE4SS confirmed
+  PalVerify v0.2.0 loaded and completed its observation probe with enforcement
+  and PII collection disabled.
 - Palworld zDev runtime artifact was downloaded and SHA-256 verified.
 - Native UE4SS source build requires GitHub access to Epic-licensed UEPseudo;
   the lifecycle source scaffold is present but cannot be compiled in this
   environment without that access.
-- Runtime per-connection platform access remains unverified on a live server.
+- Runtime candidate symbols are now confirmed, but per-connection platform
+  values remain unverified.
+- The release is unsigned because no trusted code-signing certificate is
+  installed on this machine; SmartScreen reputation warnings cannot be
+  guaranteed away without a trusted signing certificate and reputation.
 
 ## Decisions
 
@@ -34,8 +51,11 @@ current PalVerify session, while real Xbox consoles and PS5 retain crossplay.
 
 ## Next Evidence Needed
 
-1. Install the observation-only server package on the target server.
-2. Capture `class_candidates` lines from `UE4SS.log`.
-3. Determine whether a per-player platform field/function is exposed.
+1. Determine whether `PalPlayerState.SyncPlayerPlatformCache`,
+   `OverridePlayerPlatform`, or `PlayerController.GetPlatformUserId` exposes a
+   server-authenticated per-player platform value.
+2. Capture those values during real connections without logging account or
+   platform identifiers.
+3. Implement and authenticate connection-bound client reporting.
 4. Test real Steam, WinGDK, Linux, Mac, Xbox console, and PS5 sessions before
    enabling any kick action.

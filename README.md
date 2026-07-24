@@ -25,8 +25,9 @@ checks.
 
 ## Current status
 
-This repository is in the verified-core and server-observation stages. It is not
-ready for production enforcement yet.
+Version 0.2.0 is installed locally and its observation-only server probe is
+deployed on the BNB DatHost server. It is not ready for production enforcement
+yet.
 
 Implemented:
 
@@ -40,8 +41,15 @@ Implemented:
   Engine.
 - Privacy-minimized process findings that expose rule IDs instead of a process
   inventory.
+- Native Windows launcher that detects the active Steam library, preserves
+  existing `PalModSettings.ini` content, installs the client payload, and starts
+  Palworld.
+- Native Windows client agent that checks exact running-process image names
+  every five seconds and stops when Palworld exits.
 - Observation-only UE4SS Lua probe for platform/identity-related runtime symbols.
 - Official Palworld package-layout draft.
+- Reproducible Windows and server-observation ZIP packaging with SHA-256
+  manifests and optional Authenticode signing.
 
 Not implemented yet:
 
@@ -49,6 +57,7 @@ Not implemented yet:
 - Connection-bound RPC transport.
 - Cryptographic proof verifier.
 - Production kick adapter.
+- Client-to-server reporting of local findings.
 - Loaded-module rules and signed-manifest verification.
 - Mac client runtime.
 
@@ -58,10 +67,20 @@ From PowerShell:
 
 ```powershell
 .\scripts\build.ps1
+.\scripts\package.ps1
 ```
 
 The script uses Visual Studio 2022's bundled CMake and builds the pure core
-without requiring Palworld or UE4SS.
+without requiring Palworld or UE4SS. The packaging script produces the Windows
+launcher bundle and the server-observation ZIP under `dist`.
+
+The release executables are plain Microsoft Visual C++ binaries: they are not
+packed, obfuscated, injected into another process, installed as a driver, or
+made persistent. The packaging script signs them automatically when a valid
+code-signing certificate exists. The current local build is unsigned because
+this machine has no trusted code-signing certificate, so Windows SmartScreen
+may still show a reputation warning even when Microsoft Defender finds no
+malware.
 
 ## Server observation probe
 
@@ -69,6 +88,12 @@ The package under `packaging/server` is observation-only. It enumerates class
 metadata and logs candidate property/function names related to platform,
 identity, online subsystem, and device family. It does not inspect property
 values, kick players, or enforce policy.
+
+The BNB deployment loaded successfully on 2026-07-24. UE4SS logged PalVerify
+v0.2.0 as `observation_only=true`, emitted candidate symbols for
+`PlayerState`, `PlayerController`, `PalPlayerState`, and
+`PalPlayerController`, then completed with `values_read=false`,
+`enforcement=false`, and `pii_collected=false`.
 
 Do not enable production kicks until real Steam, WinGDK, Linux, Mac, Xbox
 console, and PS5 sessions have been observed on the target Palworld build.
