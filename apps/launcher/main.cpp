@@ -37,7 +37,7 @@ namespace {
 
 constexpr wchar_t window_class[] = L"Pal3MienLauncherWindow";
 constexpr wchar_t window_title[] = L"Palworld 3 Miền";
-constexpr std::string_view launcher_version = "1.0.1";
+constexpr std::string_view launcher_version = "1.0.2";
 constexpr std::string_view launcher_display_version = "1.0";
 constexpr std::string_view palverify_version = "1.0";
 constexpr std::string_view default_manifest_url =

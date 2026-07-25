@@ -238,8 +238,8 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.1"' `
-    "launcher must use an internal revision so installed v1.0 clients update"
+Require-Text $launcherSource 'launcher_version = "1.0.2"' `
+    "launcher must use the client UI revision so installed clients update"
 Require-Text $launcherSource 'launcher_display_version = "1.0"' `
     "launcher UI must keep the official v1.0 marketing version"
 Require-Text $launcherSource 'utf8_to_wide(launcher_display_version)' `
@@ -255,10 +255,10 @@ Require-Text $launcherSource 'palverify_version = "1.0"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.1"' `
-    "stable manifest must trigger the internal v1.0.1 launcher repair"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.1"' `
-    "stable manifest must require the repaired launcher revision"
+Require-Text $releaseManifest '"launcherVersion": "1.0.2"' `
+    "stable manifest must trigger the internal v1.0.2 launcher update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.2"' `
+    "stable manifest must require the client UI launcher revision"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
 Require-Text $launcherSource `
