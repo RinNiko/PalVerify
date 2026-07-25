@@ -211,6 +211,16 @@ Require-Text $launcherSource 'WM_LBUTTONUP' `
     "launcher buttons must activate on release after pressed feedback"
 Require-Text $launcherSource 'draw_button_interaction' `
     "launcher buttons must render hover and pressed feedback"
+Require-Text $launcherSource 'enum class StatusIcon' `
+    "launcher must model success, warning, and error status icons"
+Require-Text $launcherSource 'StatusIcon::Success' `
+    "launcher must render a green success icon only when ready"
+Require-Text $launcherSource 'StatusIcon::Warning' `
+    "launcher must render a yellow warning icon for transient states"
+Require-Text $launcherSource 'StatusIcon::Error' `
+    "launcher must render a red error icon for blocking failures"
+Require-Text $launcherSource 'draw_status_icon' `
+    "launcher must draw the status icon from the current state"
 Require-Text $launcherSource 'show_error_details' `
     "launcher failure button must open detailed diagnostics"
 Require-Text $launcherSource 'copy_text_to_clipboard' `
@@ -228,8 +238,12 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0"' `
-    "launcher diagnostics and UI must expose official version 1.0"
+Require-Text $launcherSource 'launcher_version = "1.0.1"' `
+    "launcher must use an internal revision so installed v1.0 clients update"
+Require-Text $launcherSource 'launcher_display_version = "1.0"' `
+    "launcher UI must keep the official v1.0 marketing version"
+Require-Text $launcherSource 'utf8_to_wide(launcher_display_version)' `
+    "launcher UI must not expose the internal update revision"
 Require-Text $launcherSource `
     'https://raw.githubusercontent.com/RinNiko/PalVerify/main/' `
     "launcher manifest must use the stable raw GitHub endpoint"
@@ -241,6 +255,10 @@ Require-Text $launcherSource 'palverify_version = "1.0"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
+Require-Text $releaseManifest '"launcherVersion": "1.0.1"' `
+    "stable manifest must trigger the internal v1.0.1 launcher repair"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.1"' `
+    "stable manifest must require the repaired launcher revision"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
 Require-Text $launcherSource `

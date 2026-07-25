@@ -37,7 +37,8 @@ namespace {
 
 constexpr wchar_t window_class[] = L"Pal3MienLauncherWindow";
 constexpr wchar_t window_title[] = L"Palworld 3 Miền";
-constexpr std::string_view launcher_version = "1.0";
+constexpr std::string_view launcher_version = "1.0.1";
+constexpr std::string_view launcher_display_version = "1.0";
 constexpr std::string_view palverify_version = "1.0";
 constexpr std::string_view default_manifest_url =
     "https://raw.githubusercontent.com/RinNiko/PalVerify/main/"
@@ -88,6 +89,27 @@ struct Snapshot {
     bool payload_installed{false};
     std::wstring support_log;
 };
+
+enum class StatusIcon {
+    Success,
+    Warning,
+    Error,
+};
+
+[[nodiscard]] auto status_icon_for(const Snapshot& snapshot) -> StatusIcon
+{
+    if (!snapshot.support_log.empty()
+        || snapshot.status == palverify::LauncherStatus::GameMissing) {
+        return StatusIcon::Error;
+    }
+    if (palverify::launcher_can_start(
+            snapshot.status,
+            snapshot.payload_installed
+        )) {
+        return StatusIcon::Success;
+    }
+    return StatusIcon::Warning;
+}
 
 struct HttpResponse {
     DWORD status{};
@@ -1597,6 +1619,76 @@ void draw_image(
     }
 }
 
+void draw_status_icon(
+    Gdiplus::Graphics& graphics,
+    const Gdiplus::RectF& rectangle,
+    StatusIcon icon
+)
+{
+    const auto scale = rectangle.Width / 62.0F;
+    const auto green = Gdiplus::Color{255, 36, 238, 116};
+    const auto yellow = Gdiplus::Color{255, 255, 191, 62};
+    const auto red = Gdiplus::Color{255, 255, 82, 82};
+    const auto color = icon == StatusIcon::Success
+        ? green
+        : (icon == StatusIcon::Warning ? yellow : red);
+    Gdiplus::Pen pen{color, 4.0F * scale};
+    pen.SetStartCap(Gdiplus::LineCapRound);
+    pen.SetEndCap(Gdiplus::LineCapRound);
+
+    const auto inset = 5.0F * scale;
+    graphics.DrawEllipse(
+        &pen,
+        rectangle.X + inset,
+        rectangle.Y + inset,
+        rectangle.Width - 2.0F * inset,
+        rectangle.Height - 2.0F * inset
+    );
+
+    if (icon == StatusIcon::Success) {
+        const Gdiplus::PointF points[]{
+            {rectangle.X + 17.0F * scale, rectangle.Y + 32.0F * scale},
+            {rectangle.X + 27.0F * scale, rectangle.Y + 42.0F * scale},
+            {rectangle.X + 46.0F * scale, rectangle.Y + 21.0F * scale},
+        };
+        graphics.DrawLines(&pen, points, 3);
+        return;
+    }
+    if (icon == StatusIcon::Warning) {
+        graphics.DrawLine(
+            &pen,
+            rectangle.X + 31.0F * scale,
+            rectangle.Y + 18.0F * scale,
+            rectangle.X + 31.0F * scale,
+            rectangle.Y + 36.0F * scale
+        );
+        Gdiplus::SolidBrush dot{color};
+        graphics.FillEllipse(
+            &dot,
+            rectangle.X + 28.0F * scale,
+            rectangle.Y + 43.0F * scale,
+            6.0F * scale,
+            6.0F * scale
+        );
+        return;
+    }
+
+    graphics.DrawLine(
+        &pen,
+        rectangle.X + 21.0F * scale,
+        rectangle.Y + 21.0F * scale,
+        rectangle.X + 41.0F * scale,
+        rectangle.Y + 41.0F * scale
+    );
+    graphics.DrawLine(
+        &pen,
+        rectangle.X + 41.0F * scale,
+        rectangle.Y + 21.0F * scale,
+        rectangle.X + 21.0F * scale,
+        rectangle.Y + 41.0F * scale
+    );
+}
+
 void draw_text(
     Gdiplus::Graphics& graphics,
     std::wstring_view text,
@@ -1920,6 +2012,11 @@ void paint_launcher(HWND window, LauncherApp& app)
     const auto cyan = Gdiplus::Color{255, 68, 222, 255};
     const auto green = Gdiplus::Color{255, 36, 238, 116};
     const auto warning = Gdiplus::Color{255, 255, 191, 62};
+    const auto error = Gdiplus::Color{255, 255, 82, 82};
+    const auto status_icon = status_icon_for(snapshot);
+    const auto status_color = status_icon == StatusIcon::Success
+        ? green
+        : (status_icon == StatusIcon::Warning ? warning : error);
 
     draw_text(
         graphics,
@@ -1938,17 +2035,17 @@ void paint_launcher(HWND window, LauncherApp& app)
         Gdiplus::FontStyleBold
     );
 
-    draw_image(
+    draw_status_icon(
         graphics,
-        assets.icon_check.get(),
-        scaled_rect(client, 70, 568, 62, 62)
+        scaled_rect(client, 70, 568, 62, 62),
+        status_icon
     );
     draw_text(
         graphics,
         snapshot.headline,
         scaled_rect(client, 151, 566, 284, 44),
         status_font_size * sx,
-        ready ? green : warning,
+        status_color,
         Gdiplus::FontStyleBold
     );
     draw_text(
@@ -1968,7 +2065,7 @@ void paint_launcher(HWND window, LauncherApp& app)
     );
     draw_text(
         graphics,
-        L"Launcher:  v" + utf8_to_wide(launcher_version),
+        L"Launcher:  v" + utf8_to_wide(launcher_display_version),
         scaled_rect(client, 70, 726, 330, 28),
         body_font_size * sx,
         white
