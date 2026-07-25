@@ -179,6 +179,7 @@ void client_config_requires_https_except_loopback_tests()
     const auto config = palverify::parse_client_config(
         R"({
             "coordinator":"https://palworld-3-mien-website.vercel.app/api/palverify",
+            "website":"https://palworld-3-mien-website.vercel.app",
             "serverId":"bnb"
         })"
     );
@@ -189,6 +190,11 @@ void client_config_requires_https_except_loopback_tests()
             "https://palworld-3-mien-website.vercel.app/api/palverify"
         },
         "coordinator"
+    );
+    require_equal(
+        config->website,
+        std::string{"https://palworld-3-mien-website.vercel.app"},
+        "website"
     );
     require_equal(config->server_id, std::string{"bnb"}, "server id");
 
@@ -201,10 +207,73 @@ void client_config_requires_https_except_loopback_tests()
     );
     require(
         palverify::parse_client_config(
-            R"({"coordinator":"http://127.0.0.1:18801","serverId":"bnb"})"
+            R"({
+                "coordinator":"http://127.0.0.1:18801",
+                "website":"http://127.0.0.1:3000",
+                "serverId":"bnb"
+            })"
         )
             .has_value(),
         "loopback HTTP should remain available for tests"
+    );
+}
+
+void client_ui_commands_are_strict_and_build_safe_fragments()
+{
+    const auto verify =
+        palverify::parse_client_ui_command("verify|123456");
+    require(verify.has_value(), "six-digit verify command should parse");
+    require_equal(
+        verify->kind,
+        palverify::ClientUiCommandKind::verify,
+        "verify command kind"
+    );
+    require_equal(verify->value, std::string{"123456"}, "verify code");
+    require_equal(
+        palverify::build_client_ui_url(
+            "https://palworld-3-mien-website.vercel.app/",
+            *verify
+        ),
+        std::string{
+            "https://palworld-3-mien-website.vercel.app/"
+            "#gacha-verify?verify=123456"
+        },
+        "verify deep link"
+    );
+
+    const auto giftcode =
+        palverify::parse_client_ui_command("giftcode|PAL-3MIEN");
+    require(giftcode.has_value(), "giftcode command should parse");
+    require_equal(
+        giftcode->kind,
+        palverify::ClientUiCommandKind::giftcode,
+        "giftcode command kind"
+    );
+    require_equal(
+        palverify::build_client_ui_url(
+            "https://palworld-3-mien-website.vercel.app",
+            *giftcode
+        ),
+        std::string{
+            "https://palworld-3-mien-website.vercel.app/"
+            "#giftcode?giftcode=PAL-3MIEN"
+        },
+        "giftcode deep link"
+    );
+
+    require(
+        !palverify::parse_client_ui_command("verify|12345").has_value(),
+        "short verify code must be rejected"
+    );
+    require(
+        !palverify::parse_client_ui_command(
+             "giftcode|https://evil.example"
+         ).has_value(),
+        "arbitrary URL must be rejected"
+    );
+    require(
+        !palverify::parse_client_ui_command("shell|calc.exe").has_value(),
+        "unknown command must be rejected"
     );
 }
 
@@ -281,6 +350,10 @@ auto main() -> int
         {
             "client config requires secure transport",
             client_config_requires_https_except_loopback_tests,
+        },
+        {
+            "client UI commands stay strict",
+            client_ui_commands_are_strict_and_build_safe_fragments,
         },
         {
             "challenge response requires compact nonce",

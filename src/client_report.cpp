@@ -534,15 +534,21 @@ auto parse_client_config(std::string_view json)
 {
     ClientConfig config{
         .coordinator = json_field(json, "coordinator"),
+        .website = json_field(json, "website"),
         .server_id = json_field(json, "serverId"),
     };
-    if (!secure_endpoint(config.coordinator) || config.server_id.empty()
+    if (!secure_endpoint(config.coordinator)
+        || !secure_endpoint(config.website)
+        || config.server_id.empty()
         || config.server_id.size() > 64) {
         return std::nullopt;
     }
     while (!config.coordinator.empty()
            && config.coordinator.back() == '/') {
         config.coordinator.pop_back();
+    }
+    while (!config.website.empty() && config.website.back() == '/') {
+        config.website.pop_back();
     }
     for (const auto character : config.server_id) {
         const auto byte = static_cast<unsigned char>(character);
@@ -568,6 +574,69 @@ auto parse_challenge_json(std::string_view json)
         }
     }
     return challenge;
+}
+
+auto parse_client_ui_command(std::string_view value)
+    -> std::optional<ClientUiCommand>
+{
+    const auto separator = value.find('|');
+    if (separator == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const auto kind = value.substr(0, separator);
+    const auto payload = value.substr(separator + 1);
+    if (kind == "verify") {
+        if (payload.size() != 6
+            || !std::ranges::all_of(payload, [](const char character) {
+                   return std::isdigit(
+                              static_cast<unsigned char>(character)
+                          )
+                       != 0;
+               })) {
+            return std::nullopt;
+        }
+        return ClientUiCommand{
+            .kind = ClientUiCommandKind::verify,
+            .value = std::string{payload},
+        };
+    }
+    if (kind != "giftcode" || payload.size() > 32) {
+        return std::nullopt;
+    }
+    if (!payload.empty()
+        && (payload.size() < 4
+            || !std::ranges::all_of(
+                payload,
+                [](const char character) {
+                    const auto byte =
+                        static_cast<unsigned char>(character);
+                    return std::isupper(byte) != 0
+                        || std::isdigit(byte) != 0
+                        || character == '-';
+                }
+            ))) {
+        return std::nullopt;
+    }
+    return ClientUiCommand{
+        .kind = ClientUiCommandKind::giftcode,
+        .value = std::string{payload},
+    };
+}
+
+auto build_client_ui_url(
+    std::string_view website,
+    const ClientUiCommand& command
+) -> std::string
+{
+    std::string url{website};
+    while (!url.empty() && url.back() == '/') {
+        url.pop_back();
+    }
+    url.push_back('/');
+    if (command.kind == ClientUiCommandKind::verify) {
+        return url + "#gacha-verify?verify=" + command.value;
+    }
+    return url + "#giftcode?giftcode=" + command.value;
 }
 
 }  // namespace palverify

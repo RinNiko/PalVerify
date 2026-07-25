@@ -131,11 +131,18 @@ if(WIN32)
 
     add_executable(PalVerifyClient
         apps/client_agent/main.cpp
+        apps/client_agent/client_ui_windows.cpp
+    )
+    target_include_directories(
+        PalVerifyClient
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/apps/client_agent"
     )
     target_link_libraries(
         PalVerifyClient
         PRIVATE
             palverify_windows_integrity
+            comctl32
             shell32
     )
     target_compile_features(PalVerifyClient PRIVATE cxx_std_20)

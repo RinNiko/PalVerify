@@ -1,6 +1,7 @@
 #include "palverify/client_report.hpp"
 #include "palverify/process_rules.hpp"
 #include "palverify/windows_process_scan.hpp"
+#include "client_ui_windows.hpp"
 
 #include <Windows.h>
 #include <ShlObj.h>
@@ -8,6 +9,7 @@
 #include <winhttp.h>
 
 #include <chrono>
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -342,6 +344,125 @@ void write_event(std::ofstream& log, std::string_view event)
     log.flush();
 }
 
+[[nodiscard]] auto take_next_ui_command(
+    const std::filesystem::path& queue_directory
+) -> std::optional<palverify::ClientUiCommand>
+{
+    std::error_code error;
+    std::filesystem::create_directories(queue_directory, error);
+    error.clear();
+
+    std::vector<std::filesystem::path> candidates;
+    for (std::filesystem::directory_iterator iterator{
+             queue_directory,
+             std::filesystem::directory_options::skip_permission_denied,
+             error,
+         },
+         end;
+         iterator != end;
+         iterator.increment(error)) {
+        if (error) {
+            error.clear();
+            continue;
+        }
+        if (iterator->is_regular_file(error)
+            && !error
+            && iterator->path().extension() == ".cmd") {
+            candidates.push_back(iterator->path());
+        }
+        error.clear();
+    }
+    std::ranges::sort(candidates);
+    for (const auto& candidate : candidates) {
+        auto processing = candidate;
+        processing.replace_extension(".processing");
+        std::filesystem::rename(candidate, processing, error);
+        if (error) {
+            error.clear();
+            continue;
+        }
+        const auto size = std::filesystem::file_size(processing, error);
+        if (error || size > 128) {
+            error.clear();
+            std::filesystem::remove(processing, error);
+            error.clear();
+            continue;
+        }
+        std::ifstream input{processing, std::ios::binary};
+        const std::string value{
+            std::istreambuf_iterator<char>{input},
+            std::istreambuf_iterator<char>{},
+        };
+        input.close();
+        std::filesystem::remove(processing, error);
+        error.clear();
+        if (const auto command =
+                palverify::parse_client_ui_command(value);
+            command.has_value()) {
+            return command;
+        }
+    }
+    return std::nullopt;
+}
+
+void start_client_ui_worker(
+    std::filesystem::path queue_directory,
+    std::string website
+)
+{
+    std::thread(
+        [
+            queue_directory = std::move(queue_directory),
+            website = std::move(website)
+        ] {
+            while (palworld_is_running()) {
+                const auto command =
+                    take_next_ui_command(queue_directory);
+                if (!command.has_value()) {
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds{250}
+                    );
+                    continue;
+                }
+                if (command->kind
+                    == palverify::ClientUiCommandKind::verify) {
+                    if (palverify::client_ui::confirm_verification(
+                            command->value
+                        )) {
+                        static_cast<void>(
+                            palverify::client_ui::open_default_browser(
+                                palverify::build_client_ui_url(
+                                    website,
+                                    *command
+                                )
+                            )
+                        );
+                    }
+                    continue;
+                }
+                const auto giftcode =
+                    palverify::client_ui::prompt_giftcode(command->value);
+                if (!giftcode.has_value()) {
+                    continue;
+                }
+                const palverify::ClientUiCommand submitted{
+                    .kind =
+                        palverify::ClientUiCommandKind::giftcode,
+                    .value = *giftcode,
+                };
+                static_cast<void>(
+                    palverify::client_ui::open_default_browser(
+                        palverify::build_client_ui_url(
+                            website,
+                            submitted
+                        )
+                    )
+                );
+            }
+        }
+    ).detach();
+}
+
 }  // namespace
 
 auto wmain() -> int
@@ -403,6 +524,10 @@ auto wmain() -> int
     }
 
     write_event(log, "CLIENT_STARTED protocol=3 version=1.0");
+    start_client_ui_worker(
+        module_directory() / "ui-queue",
+        config->website
+    );
     auto inventory = palverify::scan_mod_inventory(*game_root);
     {
         std::string ids;

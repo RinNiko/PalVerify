@@ -24,7 +24,18 @@ struct ClientReport {
 
 struct ClientConfig {
     std::string coordinator;
+    std::string website;
     std::string server_id;
+};
+
+enum class ClientUiCommandKind {
+    verify,
+    giftcode,
+};
+
+struct ClientUiCommand {
+    ClientUiCommandKind kind;
+    std::string value;
 };
 
 [[nodiscard]] auto steam_user_id_from_account_id(
@@ -53,5 +64,13 @@ struct ClientConfig {
 
 [[nodiscard]] auto parse_challenge_json(std::string_view json)
     -> std::optional<std::string>;
+
+[[nodiscard]] auto parse_client_ui_command(std::string_view value)
+    -> std::optional<ClientUiCommand>;
+
+[[nodiscard]] auto build_client_ui_url(
+    std::string_view website,
+    const ClientUiCommand& command
+) -> std::string;
 
 }  // namespace palverify

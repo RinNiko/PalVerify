@@ -1,5 +1,6 @@
 local commands = {}
 local logs = {}
+local hooks = {}
 
 local original_print = print
 print = function(message)
@@ -8,6 +9,10 @@ end
 
 ExecuteAsync = function(callback)
     callback()
+end
+
+RegisterHook = function(path, callback)
+    hooks[path] = callback
 end
 
 local original_execute = os.execute
@@ -30,16 +35,73 @@ end
 if not loaded then
     fail("client main failed to load: " .. tostring(error_message))
 end
-if #commands ~= 1 then
-    fail("expected exactly one client agent launch command")
+if #commands ~= 2 then
+    fail("expected queue preparation and one client agent launch")
 end
 if not string.find(
-    commands[1],
+    commands[2],
     "PalVerifyClient.exe",
     1,
     true
 ) then
     fail("launch command must target PalVerifyClient.exe")
 end
+local chat_hook =
+    hooks["/Script/Pal.PalGameStateInGame:BroadcastChatMessage"]
+if type(chat_hook) ~= "function" then
+    fail("client must register its private UI command hook")
+end
 
-original_print("PASS client probe launches observation agent once")
+local queued_command = ""
+local cleared = false
+local original_open = io.open
+local original_rename = os.rename
+io.open = function()
+    return {
+        write = function(_, value)
+            queued_command = value
+        end,
+        close = function()
+        end,
+    }
+end
+os.rename = function()
+    return true
+end
+
+local function unreal_string(value, clearable)
+    return {
+        ToString = function()
+            return value
+        end,
+        Clear = function()
+            if clearable then
+                cleared = true
+            end
+        end,
+    }
+end
+
+chat_hook(nil, {
+    get = function()
+        return {
+            Sender = unreal_string("SYSTEM", false),
+            Message = unreal_string(
+                "[PAL3MIEN_VERIFY] 123456",
+                true
+            ),
+        }
+    end,
+})
+
+io.open = original_open
+os.rename = original_rename
+
+if queued_command ~= "verify|123456" then
+    fail("private verification message must become a strict UI command")
+end
+if not cleared then
+    fail("private UI transport message must be hidden from chat")
+end
+
+original_print("PASS client probe launches agent and intercepts private UI commands")

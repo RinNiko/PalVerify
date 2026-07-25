@@ -1,4 +1,5 @@
 {
   "coordinator": "https://palworld-3-mien-website.vercel.app/api/palverify",
+  "website": "https://palworld-3-mien-website.vercel.app",
   "serverId": "bnb"
 }
