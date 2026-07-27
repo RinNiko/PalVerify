@@ -122,6 +122,99 @@ void workshop_inventory_reports_package_not_file_list()
     std::filesystem::remove_all(root, ignored);
 }
 
+void configured_workshop_inventory_reports_external_packages()
+{
+    const auto root = temporary_root("external-workshop-inventory");
+    const auto workshop_root = root / "SteamWorkshop";
+    write_file(
+        root / "Mods" / "PalModSettings.ini",
+        "[PalModSettings]\n"
+        "bGlobalEnableMod=True\n"
+        "WorkshopRootDir=" + workshop_root.string() + "\n"
+        "ConfigVersion=1.0\n"
+    );
+    write_file(
+        root / "Mods" / "Workshop" / "PalVerify" / "Info.json",
+        R"({"PackageName":"PalVerify","Version":"1.0.2"})"
+    );
+    const auto ue4ss_package = workshop_root / "3625223587";
+    write_file(
+        ue4ss_package / "Info.json",
+        R"({
+            "PackageName":"UE4SSExperimentalPW",
+            "Version":"experimental-palworld-6"
+        })"
+    );
+    write_file(
+        ue4ss_package
+            / "Mods"
+            / "StatueMapMarkers"
+            / "Scripts"
+            / "main.lua",
+        "return true\n"
+    );
+    write_file(
+        ue4ss_package
+            / "Mods"
+            / "StatueMapMarkers"
+            / "enabled.txt",
+        ""
+    );
+    write_file(
+        ue4ss_package
+            / "Mods"
+            / "BPModLoaderMod"
+            / "Scripts"
+            / "main.lua",
+        "return true\n"
+    );
+
+    const auto inventory = palverify::scan_mod_inventory(root);
+    require_equal(
+        inventory.size(),
+        std::size_t{3},
+        "configured WorkshopRootDir and enabled nested mod must be reported"
+    );
+    require_equal(
+        inventory[0].id,
+        std::string{"PalVerify"},
+        "installed PalVerify package remains present"
+    );
+    require_equal(
+        inventory[1].id,
+        std::string{"StatueMapMarkers"},
+        "enabled nested UE4SS mod must be reported by folder name"
+    );
+    require_equal(
+        inventory[1].version,
+        std::string{"ue4ss"},
+        "nested UE4SS mod version marker"
+    );
+    require_equal(
+        inventory[1].digest.size(),
+        std::size_t{64},
+        "nested UE4SS mod digest"
+    );
+    require_equal(
+        inventory[2].id,
+        std::string{"UE4SSExperimentalPW"},
+        "external UE4SS package must be reported"
+    );
+    require_equal(
+        inventory[2].version,
+        std::string{"experimental-palworld-6"},
+        "external workshop version"
+    );
+    require_equal(
+        inventory[2].digest.size(),
+        std::size_t{64},
+        "external workshop package digest"
+    );
+
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+}
+
 void report_json_contains_only_compact_policy_fields()
 {
     const palverify::ClientReport report{
@@ -141,6 +234,19 @@ void report_json_contains_only_compact_policy_fields()
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         }},
         .violations = {"CHEAT_ENGINE_RUNNING"},
+        .violation_evidence = {{
+            .rule = "INJECTED_MODULE_DETECTED",
+            .source = "module",
+            .file_name = "trainerlib_x64.dll",
+            .sha256 =
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            .signer_name = "WeMod LLC",
+            .file_description = "TrainerLib Plugin",
+            .company_name = "WeMod LLC",
+            .match_reason = "WEMOD_MODULE_SIGNATURE",
+            .signature_valid = true,
+        }},
     };
 
     const auto json = palverify::build_client_report_json(report);
@@ -167,10 +273,148 @@ void report_json_contains_only_compact_policy_fields()
         "compact integrity rule"
     );
     require(
+        json.find("\"fileName\":\"trainerlib_x64.dll\"")
+                != std::string::npos
+            && json.find("\"matchReason\":\"WEMOD_MODULE_SIGNATURE\"")
+                != std::string::npos
+            && json.find("\"signerName\":\"WeMod LLC\"")
+                != std::string::npos
+            && json.find("\"fileDescription\":\"TrainerLib Plugin\"")
+                != std::string::npos
+            && json.find("\"companyName\":\"WeMod LLC\"")
+                != std::string::npos,
+        "report must include bounded module evidence for false-positive review"
+    );
+    require(
         json.find("Program Files") == std::string::npos
             && json.find("Info.json") == std::string::npos
-            && json.find("cheatengine-x86_64.exe") == std::string::npos,
-        "report must not upload paths, file inventory, or process names"
+            && json.find("C:\\") == std::string::npos,
+        "report must not upload paths or file inventories"
+    );
+}
+
+void preflight_json_omits_player_identity_and_session_state()
+{
+    const palverify::ClientPreflight preflight{
+        .server_id = "bnb",
+        .protocol_version = "3",
+        .mods = {{
+            .id = "PalVerify",
+            .version = "1.0.1",
+            .digest =
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }},
+        .violations = {"CHEAT_ENGINE_RUNNING"},
+        .violation_evidence = {{
+            .rule = "INJECTED_MODULE_DETECTED",
+            .source = "module",
+            .file_name = "trainerlib_x64.dll",
+            .sha256 =
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            .signer_name = "WeMod LLC",
+            .file_description = "TrainerLib Plugin",
+            .company_name = "WeMod LLC",
+            .match_reason = "WEMOD_MODULE_SIGNATURE",
+            .signature_valid = true,
+        }},
+    };
+
+    const auto json = palverify::build_client_preflight_json(preflight);
+    require(
+        json.find("\"serverId\":\"bnb\"") != std::string::npos,
+        "preflight server id"
+    );
+    require(
+        json.find("\"protocolVersion\":\"3\"") != std::string::npos,
+        "preflight protocol"
+    );
+    require(
+        json.find("\"id\":\"PalVerify\"") != std::string::npos,
+        "preflight compact mod id"
+    );
+    require(
+        json.find("CHEAT_ENGINE_RUNNING") != std::string::npos,
+        "preflight compact integrity rule"
+    );
+    require(
+        json.find("userId") == std::string::npos
+            && json.find("challenge") == std::string::npos
+            && json.find("sentAt") == std::string::npos,
+        "preflight must not contain identity or session state"
+    );
+}
+
+void runtime_alert_identifies_the_flagged_software_without_local_paths()
+{
+    const std::vector<std::string> violations{
+        "INJECTED_MODULE_DETECTED",
+    };
+    const std::vector<palverify::IntegrityEvidence> evidence{{
+        .rule = "INJECTED_MODULE_DETECTED",
+        .source = "module",
+        .file_name = "trainerlib_x64.dll",
+        .sha256 =
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        .signer_name = "WeMod LLC",
+        .file_description = "TrainerLib Plugin",
+        .company_name = "WeMod LLC",
+        .match_reason = "WEMOD_MODULE_SIGNATURE",
+        .signature_valid = true,
+    }};
+
+    const auto message =
+        palverify::format_runtime_integrity_message(violations, evidence);
+    require(
+        message.find("trainerlib_x64.dll") != std::string::npos
+            && message.find("TrainerLib Plugin") != std::string::npos
+            && message.find("WeMod LLC") != std::string::npos
+            && message.find("WEMOD_MODULE_SIGNATURE") != std::string::npos,
+        "runtime alert must identify the exact flagged module and publisher"
+    );
+    require(
+        message.find("bbbbbbbb") == std::string::npos
+            && message.find("C:\\") == std::string::npos,
+        "player alert must stay compact and never expose a local path"
+    );
+}
+
+void preflight_response_requires_bounded_safe_codes()
+{
+    const auto accepted = palverify::parse_client_preflight_response(
+        R"({"accepted":true,"reason":"VERIFIED"})"
+    );
+    require(accepted.has_value(), "accepted preflight response should parse");
+    require(accepted->accepted, "accepted response flag");
+    require_equal(
+        accepted->reason,
+        std::string{"VERIFIED"},
+        "accepted response reason"
+    );
+
+    const auto rejected = palverify::parse_client_preflight_response(
+        R"({
+            "accepted":false,
+            "reason":"UNAPPROVED_MOD",
+            "detail":"PalVerify:DIGEST_MISMATCH"
+        })"
+    );
+    require(rejected.has_value(), "rejected preflight response should parse");
+    require(!rejected->accepted, "rejected response flag");
+    require_equal(
+        rejected->detail,
+        std::string{"PalVerify:DIGEST_MISMATCH"},
+        "safe rejection detail"
+    );
+
+    require(
+        !palverify::parse_client_preflight_response(
+             R"({"accepted":false,"reason":"BAD CODE","detail":"C:\\Users\\player"})"
+         )
+             .has_value(),
+        "unsafe or path-bearing response must be rejected"
     );
 }
 
@@ -330,6 +574,37 @@ void report_sequence_uses_wall_clock_floor_after_restart()
     );
 }
 
+void preflight_http_retries_only_bounded_transient_failures()
+{
+    constexpr unsigned long timeout_error = 12002;
+    require(
+        palverify::should_retry_client_http(
+            std::nullopt,
+            timeout_error,
+            1,
+            2
+        ),
+        "WinHTTP timeout should retry before the final attempt"
+    );
+    require(
+        palverify::should_retry_client_http(503, 0, 1, 2),
+        "coordinator 5xx should retry"
+    );
+    require(
+        !palverify::should_retry_client_http(409, 0, 1, 2),
+        "expected challenge conflict should not retry"
+    );
+    require(
+        !palverify::should_retry_client_http(
+            std::nullopt,
+            timeout_error,
+            2,
+            2
+        ),
+        "client retries must remain bounded"
+    );
+}
+
 }  // namespace
 
 auto main() -> int
@@ -344,8 +619,24 @@ auto main() -> int
             workshop_inventory_reports_package_not_file_list,
         },
         {
+            "configured workshop root reports external packages",
+            configured_workshop_inventory_reports_external_packages,
+        },
+        {
             "report JSON stays compact",
             report_json_contains_only_compact_policy_fields,
+        },
+        {
+            "preflight JSON omits player identity",
+            preflight_json_omits_player_identity_and_session_state,
+        },
+        {
+            "runtime alert identifies flagged software safely",
+            runtime_alert_identifies_the_flagged_software_without_local_paths,
+        },
+        {
+            "preflight response codes stay safe",
+            preflight_response_requires_bounded_safe_codes,
         },
         {
             "client config requires secure transport",
@@ -366,6 +657,10 @@ auto main() -> int
         {
             "report sequence uses wall-clock floor",
             report_sequence_uses_wall_clock_floor_after_restart,
+        },
+        {
+            "client HTTP retries stay bounded",
+            preflight_http_retries_only_bounded_transient_failures,
         },
     };
 

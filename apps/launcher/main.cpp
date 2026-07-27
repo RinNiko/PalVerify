@@ -1,4 +1,5 @@
 #include "palverify/installer_settings.hpp"
+#include "palverify/client_report.hpp"
 #include "palverify/launcher_state.hpp"
 #include "palverify/payload_archive.hpp"
 #include "../../resources/launcher/resource.h"
@@ -9,6 +10,7 @@
 #include <dwmapi.h>
 #include <gdiplus.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 #include <winhttp.h>
 #include <windowsx.h>
 
@@ -18,6 +20,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstddef>
+#include <cwctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -37,16 +40,15 @@ namespace {
 
 constexpr wchar_t window_class[] = L"Pal3MienLauncherWindow";
 constexpr wchar_t window_title[] = L"Palworld 3 Miền";
-constexpr std::string_view launcher_version = "1.0.2";
+constexpr std::string_view launcher_version = "1.0.20";
 constexpr std::string_view launcher_display_version = "1.0";
-constexpr std::string_view palverify_version = "1.0";
+constexpr std::string_view palverify_version = "1.0.11";
 constexpr std::string_view default_manifest_url =
-    "https://raw.githubusercontent.com/RinNiko/PalVerify/main/"
-    "palverify-launcher-manifest.json";
+    "https://ae3mien.net/api/palverify/v1/launcher/manifest";
 constexpr std::string_view release_manifest_asset_name =
     "palverify-launcher-manifest.json";
 constexpr wchar_t default_website_url[] =
-    L"https://palworld-3-mien-website.vercel.app/";
+    L"https://ae3mien.net/";
 constexpr float design_width = 1672.0F;
 constexpr float design_height = 941.0F;
 constexpr float heading_font_size = 24.0F;
@@ -59,6 +61,7 @@ constexpr UINT message_snapshot = WM_APP + 1;
 constexpr UINT message_progress = WM_APP + 2;
 constexpr UINT message_update_failed = WM_APP + 3;
 constexpr UINT timer_recheck = 1;
+constexpr UINT timer_client_watchdog = 2;
 constexpr unsigned int game_launch_attempts = 3;
 
 struct Arguments {
@@ -86,7 +89,9 @@ struct Snapshot {
     int progress{10};
     bool checking{true};
     bool updating{false};
+    bool waiting_for_game_exit{false};
     bool payload_installed{false};
+    bool preflight_succeeded{false};
     std::wstring support_log;
 };
 
@@ -104,7 +109,8 @@ enum class StatusIcon {
     }
     if (palverify::launcher_can_start(
             snapshot.status,
-            snapshot.payload_installed
+            snapshot.payload_installed,
+            snapshot.preflight_succeeded
         )) {
         return StatusIcon::Success;
     }
@@ -288,6 +294,153 @@ enum class InteractiveButton {
     News,
 };
 
+[[nodiscard]] auto normalized_path_for_compare(
+    const std::filesystem::path& value
+) -> std::wstring
+{
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(value, error);
+    const auto normalized = error ? value.lexically_normal() : absolute;
+    auto result = normalized.lexically_normal().wstring();
+    std::ranges::transform(result, result.begin(), [](wchar_t character) {
+        return static_cast<wchar_t>(std::towlower(character));
+    });
+    return result;
+}
+
+[[nodiscard]] auto process_image_path(DWORD process_id)
+    -> std::optional<std::filesystem::path>
+{
+    const auto process = OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION,
+        FALSE,
+        process_id
+    );
+    if (process == nullptr) {
+        return std::nullopt;
+    }
+    std::array<wchar_t, 32768> buffer{};
+    DWORD length = static_cast<DWORD>(buffer.size());
+    const auto queried = QueryFullProcessImageNameW(
+        process,
+        0,
+        buffer.data(),
+        &length
+    );
+    CloseHandle(process);
+    if (queried == FALSE || length == 0) {
+        return std::nullopt;
+    }
+    return std::filesystem::path{
+        std::wstring{buffer.data(), length}
+    };
+}
+
+[[nodiscard]] auto palworld_is_running() -> bool
+{
+    const auto snapshot = CreateToolhelp32Snapshot(
+        TH32CS_SNAPPROCESS,
+        0
+    );
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return true;
+    }
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    auto success = Process32FirstW(snapshot, &entry) != FALSE;
+    while (success) {
+        if (_wcsicmp(entry.szExeFile, L"Palworld.exe") == 0
+            || _wcsicmp(
+                   entry.szExeFile,
+                   L"Palworld-Win64-Shipping.exe"
+               )
+                == 0) {
+            CloseHandle(snapshot);
+            return true;
+        }
+        success = Process32NextW(snapshot, &entry) != FALSE;
+    }
+    CloseHandle(snapshot);
+    return false;
+}
+
+[[nodiscard]] auto stop_running_client(
+    const std::filesystem::path& executable
+) -> bool
+{
+    const auto target = normalized_path_for_compare(executable);
+    const auto snapshot = CreateToolhelp32Snapshot(
+        TH32CS_SNAPPROCESS,
+        0
+    );
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    auto success = Process32FirstW(snapshot, &entry) != FALSE;
+    while (success) {
+        const auto image = process_image_path(entry.th32ProcessID);
+        if (image.has_value()
+            && normalized_path_for_compare(*image) == target) {
+            const auto process = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION
+                    | PROCESS_TERMINATE
+                    | SYNCHRONIZE,
+                FALSE,
+                entry.th32ProcessID
+            );
+            if (process == nullptr) {
+                CloseHandle(snapshot);
+                return false;
+            }
+            const auto terminated = TerminateProcess(process, 0) != FALSE;
+            const auto wait = terminated
+                ? WaitForSingleObject(process, 5000)
+                : WAIT_FAILED;
+            CloseHandle(process);
+            if (!terminated || wait != WAIT_OBJECT_0) {
+                CloseHandle(snapshot);
+                return false;
+            }
+        }
+        success = Process32NextW(snapshot, &entry) != FALSE;
+    }
+    CloseHandle(snapshot);
+    return true;
+}
+
+[[nodiscard]] auto client_agent_is_running(
+    const std::filesystem::path& executable
+) -> bool
+{
+    const auto target = normalized_path_for_compare(executable);
+    const auto snapshot = CreateToolhelp32Snapshot(
+        TH32CS_SNAPPROCESS,
+        0
+    );
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return true;
+    }
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    auto success = Process32FirstW(snapshot, &entry) != FALSE;
+    while (success) {
+        const auto image = process_image_path(entry.th32ProcessID);
+        if (image.has_value()
+            && normalized_path_for_compare(*image) == target) {
+            CloseHandle(snapshot);
+            return true;
+        }
+        success = Process32NextW(snapshot, &entry) != FALSE;
+    }
+    CloseHandle(snapshot);
+    return false;
+}
+
 [[nodiscard]] auto module_directory() -> std::filesystem::path
 {
     std::wstring buffer(32768, L'\0');
@@ -340,6 +493,15 @@ enum class InteractiveButton {
         return {
             .success = false,
             .detail = payload.detail,
+        };
+    }
+    const auto client_executable =
+        game_root / "Mods" / "Workshop" / "PalVerify" / "client"
+        / "Scripts" / "PalVerifyClient.exe";
+    if (!stop_running_client(client_executable)) {
+        return {
+            .success = false,
+            .detail = "CLIENT_STOP_BEFORE_INSTALL_FAILED",
         };
     }
     return palverify::install_palverify_payload(
@@ -1081,15 +1243,23 @@ void record_http_failure(std::string_view operation, DWORD error)
     return target;
 }
 
+struct ClientStartProcess {
+    bool started{false};
+    DWORD exit_code{STILL_ACTIVE};
+    DWORD win32_error{ERROR_SUCCESS};
+};
+
 [[nodiscard]] auto start_client_agent(
     const std::filesystem::path& game_root
-) -> bool
+) -> ClientStartProcess
 {
+    ClientStartProcess result;
     const auto executable =
         game_root / "Mods" / "Workshop" / "PalVerify" / "client"
         / "Scripts" / "PalVerifyClient.exe";
     if (!std::filesystem::is_regular_file(executable)) {
-        return false;
+        result.win32_error = ERROR_FILE_NOT_FOUND;
+        return result;
     }
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -1108,11 +1278,231 @@ void record_http_failure(std::string_view operation, DWORD error)
         &process
     );
     if (created == FALSE) {
-        return false;
+        result.win32_error = GetLastError();
+        return result;
     }
     CloseHandle(process.hThread);
+    const auto wait = WaitForSingleObject(process.hProcess, 750);
+    if (wait == WAIT_OBJECT_0) {
+        static_cast<void>(GetExitCodeProcess(
+            process.hProcess,
+            &result.exit_code
+        ));
+        result.started = result.exit_code == 0;
+    } else if (wait == WAIT_TIMEOUT) {
+        result.started = true;
+        result.exit_code = STILL_ACTIVE;
+    } else {
+        result.win32_error = GetLastError();
+    }
     CloseHandle(process.hProcess);
-    return true;
+    return result;
+}
+
+struct ClientPreflightProcess {
+    bool launched{false};
+    bool timed_out{false};
+    DWORD exit_code{MAXDWORD};
+    DWORD win32_error{ERROR_SUCCESS};
+    std::string output;
+};
+
+[[nodiscard]] auto clean_preflight_output(std::string_view value)
+    -> std::string
+{
+    std::string clean;
+    clean.reserve(std::min<std::size_t>(value.size(), 2048));
+    bool previous_space = false;
+    for (const auto character : value) {
+        if (clean.size() == 2048) {
+            break;
+        }
+        const auto byte = static_cast<unsigned char>(character);
+        const auto safe = byte >= 0x20 && byte <= 0x7e;
+        const auto output = safe ? character : ' ';
+        if (output == ' ') {
+            if (clean.empty() || previous_space) {
+                continue;
+            }
+            previous_space = true;
+        } else {
+            previous_space = false;
+        }
+        clean.push_back(output);
+    }
+    while (!clean.empty() && clean.back() == ' ') {
+        clean.pop_back();
+    }
+    return clean;
+}
+
+[[nodiscard]] auto run_client_preflight(
+    const std::filesystem::path& game_root
+) -> ClientPreflightProcess
+{
+    ClientPreflightProcess result;
+    const auto executable =
+        game_root / "Mods" / "Workshop" / "PalVerify" / "client"
+        / "Scripts" / "PalVerifyClient.exe";
+    if (!std::filesystem::is_regular_file(executable)) {
+        result.win32_error = ERROR_FILE_NOT_FOUND;
+        return result;
+    }
+
+    SECURITY_ATTRIBUTES security{};
+    security.nLength = sizeof(security);
+    security.bInheritHandle = TRUE;
+    HANDLE read_pipe = nullptr;
+    HANDLE write_pipe = nullptr;
+    if (CreatePipe(&read_pipe, &write_pipe, &security, 0) == FALSE) {
+        result.win32_error = GetLastError();
+        return result;
+    }
+    if (SetHandleInformation(
+            read_pipe,
+            HANDLE_FLAG_INHERIT,
+            0
+        )
+        == FALSE) {
+        result.win32_error = GetLastError();
+        CloseHandle(write_pipe);
+        CloseHandle(read_pipe);
+        return result;
+    }
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdOutput = write_pipe;
+    startup.hStdError = write_pipe;
+    PROCESS_INFORMATION process{};
+    auto command_line =
+        L"\"" + executable.wstring() + L"\" --preflight";
+    std::vector<wchar_t> command{
+        command_line.begin(),
+        command_line.end(),
+    };
+    command.push_back(L'\0');
+    const auto working_directory = executable.parent_path().wstring();
+    const auto created = CreateProcessW(
+        executable.c_str(),
+        command.data(),
+        nullptr,
+        nullptr,
+        TRUE,
+        CREATE_NO_WINDOW,
+        nullptr,
+        working_directory.c_str(),
+        &startup,
+        &process
+    );
+    CloseHandle(write_pipe);
+    if (created == FALSE) {
+        result.win32_error = GetLastError();
+        CloseHandle(read_pipe);
+        return result;
+    }
+    result.launched = true;
+    CloseHandle(process.hThread);
+
+    constexpr DWORD preflight_timeout_milliseconds = 35'000;
+    const auto wait =
+        WaitForSingleObject(process.hProcess, preflight_timeout_milliseconds);
+    if (wait == WAIT_TIMEOUT) {
+        result.timed_out = true;
+        TerminateProcess(process.hProcess, 124);
+        WaitForSingleObject(process.hProcess, 5000);
+    } else if (wait == WAIT_FAILED) {
+        result.win32_error = GetLastError();
+    }
+    static_cast<void>(GetExitCodeProcess(
+        process.hProcess,
+        &result.exit_code
+    ));
+    CloseHandle(process.hProcess);
+
+    std::string output;
+    std::array<char, 512> buffer{};
+    for (;;) {
+        DWORD read = 0;
+        if (ReadFile(
+                read_pipe,
+                buffer.data(),
+                static_cast<DWORD>(buffer.size()),
+                &read,
+                nullptr
+            )
+            == FALSE
+            || read == 0) {
+            break;
+        }
+        output.append(buffer.data(), read);
+        if (output.size() >= 2048) {
+            break;
+        }
+    }
+    CloseHandle(read_pipe);
+    result.output = clean_preflight_output(output);
+    return result;
+}
+
+[[nodiscard]] auto preflight_copy(
+    const ClientPreflightProcess& preflight
+) -> std::pair<std::wstring, std::wstring>
+{
+    if (!preflight.launched) {
+        return {
+            L"Không thể chạy kiểm tra PalVerify",
+            L"Client chưa khởi động được. Bấm để xem chi tiết lỗi.",
+        };
+    }
+    if (preflight.timed_out) {
+        return {
+            L"Máy chủ xác minh không phản hồi",
+            L"Kiểm tra Internet rồi bấm làm mới để thử lại.",
+        };
+    }
+    switch (static_cast<palverify::ClientPreflightExit>(
+        preflight.exit_code
+    )) {
+    case palverify::ClientPreflightExit::integrity_violation:
+        return {
+            L"Phát hiện phần mềm can thiệp",
+            L"Tắt phần mềm liên quan, thoát hẳn game rồi kiểm tra lại.",
+        };
+    case palverify::ClientPreflightExit::unapproved_mod:
+        return {
+            L"PalVerify chưa được máy chủ chấp nhận",
+            L"Phiên bản hoặc hash client không khớp chính sách server.",
+        };
+    case palverify::ClientPreflightExit::invalid_config:
+    case palverify::ClientPreflightExit::game_root_unavailable:
+    case palverify::ClientPreflightExit::steam_user_unavailable:
+        return {
+            L"Cấu hình PalVerify chưa hợp lệ",
+            L"Mở Steam đúng tài khoản rồi bấm làm mới để tự sửa.",
+        };
+    case palverify::ClientPreflightExit::scan_unavailable:
+        return {
+            L"Không thể quét trạng thái máy",
+            L"Thử mở launcher bằng quyền thường và tắt game trước khi kiểm tra.",
+        };
+    case palverify::ClientPreflightExit::transport_failed:
+    case palverify::ClientPreflightExit::http_rejected:
+    case palverify::ClientPreflightExit::invalid_response:
+        return {
+            L"Không thể xác minh với máy chủ",
+            L"Kiểm tra Internet rồi bấm làm mới để thử lại.",
+        };
+    case palverify::ClientPreflightExit::accepted:
+        break;
+    case palverify::ClientPreflightExit::rejected:
+        break;
+    }
+    return {
+        L"PalVerify bị máy chủ từ chối",
+        L"Bấm để xem mã lỗi và gửi cho admin.",
+    };
 }
 
 [[nodiscard]] auto shell_open_steam_uri(
@@ -1305,23 +1695,172 @@ public:
             result->headline = headline;
             result->detail = detail;
             result->progress =
-                result->status == palverify::LauncherStatus::Ready ? 100 : 55;
+                result->status == palverify::LauncherStatus::Ready ? 70 : 55;
             result->checking = false;
             if (result->status == palverify::LauncherStatus::Ready) {
-                const auto install =
-                    install_embedded_payload(*result->game_root);
-                if (!install.success) {
-                    result->headline = L"Không thể cài PalVerify";
+                const auto game_running = palworld_is_running();
+                if (!palverify::launcher_can_prepare_payload(
+                        result->status,
+                        game_running
+                    )) {
+                    result->waiting_for_game_exit = true;
+                    result->headline = L"Hãy thoát hoàn toàn Palworld";
                     result->detail =
-                        L"Kiểm tra quyền ghi thư mục game rồi thử lại.";
-                    result->progress = 0;
-                    assign_support_log(
-                        *result,
-                        "INSTALL_PAYLOAD_FAILED",
-                        install.detail
-                    );
+                        L"Launcher sẽ tự cài UE4SS sau khi game đã đóng.";
                 } else {
-                    result->payload_installed = true;
+                    const auto install =
+                        install_embedded_payload(*result->game_root);
+                    if (!install.success) {
+                        result->headline = L"Không thể cài PalVerify";
+                        result->detail =
+                            L"Kiểm tra quyền ghi thư mục game rồi thử lại.";
+                        result->progress = 0;
+                        assign_support_log(
+                            *result,
+                            "INSTALL_PAYLOAD_FAILED",
+                            install.detail
+                        );
+                    } else {
+                        result->payload_installed = true;
+                        auto preflight =
+                            run_client_preflight(*result->game_root);
+                        const auto preflight_accepted =
+                            [](const ClientPreflightProcess& value) {
+                                return value.launched
+                                    && !value.timed_out
+                                    && value.exit_code
+                                        == static_cast<DWORD>(
+                                            palverify::ClientPreflightExit::
+                                                accepted
+                                        );
+                            };
+                        bool remediation_failed = false;
+                        bool remediated_unapproved_mod = false;
+                        if (!preflight_accepted(preflight)) {
+                            const auto unapproved_mod_ids =
+                                palverify::
+                                    extract_not_whitelisted_mod_ids(
+                                        preflight.output
+                                    );
+                            if (!unapproved_mod_ids.empty()) {
+                                const auto remediation =
+                                    palverify::quarantine_unapproved_mods(
+                                        *result->game_root,
+                                        std::span<const std::string>{
+                                            unapproved_mod_ids
+                                        }
+                                    );
+                                if (!remediation.success) {
+                                    remediation_failed = true;
+                                    result->headline =
+                                        L"Không thể cách ly mod không hợp lệ";
+                                    result->detail =
+                                        L"Kiểm tra quyền ghi thư mục game rồi thử lại.";
+                                    result->progress = 85;
+                                    assign_support_log(
+                                        *result,
+                                        "MOD_REMEDIATION_FAILED",
+                                        remediation.detail
+                                    );
+                                } else if (remediation.quarantined > 0) {
+                                    const auto reinstall =
+                                        install_embedded_payload(
+                                            *result->game_root
+                                        );
+                                    if (!reinstall.success) {
+                                        remediation_failed = true;
+                                        result->headline =
+                                            L"Không thể khôi phục mod bắt buộc";
+                                        result->detail =
+                                            L"Kiểm tra quyền ghi thư mục game rồi thử lại.";
+                                        result->progress = 85;
+                                        assign_support_log(
+                                            *result,
+                                            "MOD_REINSTALL_FAILED",
+                                            reinstall.detail
+                                        );
+                                    } else {
+                                        remediated_unapproved_mod = true;
+                                        preflight = run_client_preflight(
+                                            *result->game_root
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        result->preflight_succeeded =
+                            !remediation_failed
+                            && preflight_accepted(preflight);
+                        if (remediation_failed) {
+                            post_snapshot(std::move(result));
+                            return;
+                        }
+                        if (result->preflight_succeeded) {
+                            const auto client_start =
+                                start_client_agent(*result->game_root);
+                            if (!client_start.started) {
+                                result->preflight_succeeded = false;
+                                result->headline =
+                                    L"Không thể duy trì PalVerify";
+                                result->detail =
+                                    L"Client đã thoát sớm. Bấm để xem mã lỗi.";
+                                result->progress = 85;
+                                const auto start_detail =
+                                    client_start.exit_code != STILL_ACTIVE
+                                    ? "early-exit-"
+                                        + std::to_string(
+                                            client_start.exit_code
+                                        )
+                                    : "create-process-failed-"
+                                        + std::to_string(
+                                            client_start.win32_error
+                                        );
+                                assign_support_log(
+                                    *result,
+                                    "CLIENT_AUTOSTART_FAILED",
+                                    start_detail
+                                );
+                            } else if (remediated_unapproved_mod) {
+                                result->headline =
+                                    L"Đã tự cách ly mod không hợp lệ";
+                                result->detail =
+                                    L"Mod ngoài whitelist đã được gỡ khỏi phiên chơi.";
+                            } else {
+                                result->headline =
+                                    L"PalVerify đã được máy chủ xác nhận!";
+                                result->detail =
+                                    L"Client, phiên bản và hash đều hợp lệ.";
+                            }
+                            result->progress = 100;
+                        } else {
+                            const auto [
+                                preflight_headline,
+                                preflight_detail
+                            ] = preflight_copy(preflight);
+                            result->headline = preflight_headline;
+                            result->detail = preflight_detail;
+                            result->progress = 85;
+                            std::string failure_detail =
+                                preflight.output.empty()
+                                ? "exit-code-"
+                                    + std::to_string(preflight.exit_code)
+                                : preflight.output;
+                            if (!preflight.launched) {
+                                failure_detail =
+                                    "create-process-failed-"
+                                    + std::to_string(
+                                        preflight.win32_error
+                                    );
+                            } else if (preflight.timed_out) {
+                                failure_detail = "preflight-timeout";
+                            }
+                            assign_support_log(
+                                *result,
+                                "CLIENT_PREFLIGHT_FAILED",
+                                failure_detail
+                            );
+                        }
+                    }
                 }
             }
             post_snapshot(std::move(result));
@@ -1338,7 +1877,7 @@ public:
         snapshot_.progress = 25;
         snapshot_.headline = L"Đang tải bản launcher mới";
         snapshot_.detail =
-            L"Launcher và Palworld sẽ tự đóng để cài bản mới.";
+            L"Launcher sẽ tự đóng để cài bản mới.";
         InvalidateRect(window_, nullptr, FALSE);
         const auto manifest = *snapshot_.manifest;
         worker_ = std::jthread([this, manifest](std::stop_token) {
@@ -1376,8 +1915,14 @@ public:
         if (snapshot_.status
                 == palverify::LauncherStatus::GameUpdateRequired
             || snapshot_.status
-                == palverify::LauncherStatus::ServerUnavailable) {
-            SetTimer(window_, timer_recheck, 8000, nullptr);
+                == palverify::LauncherStatus::ServerUnavailable
+            || snapshot_.waiting_for_game_exit) {
+            SetTimer(
+                window_,
+                timer_recheck,
+                snapshot_.waiting_for_game_exit ? 2000 : 8000,
+                nullptr
+            );
         } else {
             KillTimer(window_, timer_recheck);
         }
@@ -1405,6 +1950,46 @@ public:
         InvalidateRect(window_, nullptr, FALSE);
     }
 
+    void supervise_client()
+    {
+        if (!snapshot_.preflight_succeeded
+            || !snapshot_.game_root.has_value()
+            || !palworld_is_running()) {
+            client_recovery_attempted_ = false;
+            return;
+        }
+        const auto executable =
+            *snapshot_.game_root / "Mods" / "Workshop" / "PalVerify"
+            / "client" / "Scripts" / "PalVerifyClient.exe";
+        if (client_agent_is_running(executable)) {
+            client_recovery_attempted_ = false;
+            return;
+        }
+        if (client_recovery_attempted_) {
+            return;
+        }
+        client_recovery_attempted_ = true;
+        const auto client_start =
+            start_client_agent(*snapshot_.game_root);
+        if (client_start.started) {
+            return;
+        }
+        snapshot_.headline = L"PalVerify đã dừng giữa phiên";
+        snapshot_.detail =
+            L"Không thể tự khởi động lại client. Bấm để xem mã lỗi.";
+        const auto start_detail =
+            client_start.exit_code != STILL_ACTIVE
+            ? "early-exit-" + std::to_string(client_start.exit_code)
+            : "create-process-failed-"
+                + std::to_string(client_start.win32_error);
+        assign_support_log(
+            snapshot_,
+            "CLIENT_RECOVERY_FAILED",
+            start_detail
+        );
+        InvalidateRect(window_, nullptr, FALSE);
+    }
+
     void start_game()
     {
         if (snapshot_.status == palverify::LauncherStatus::GameUpdateRequired) {
@@ -1420,24 +2005,39 @@ public:
         }
         if (!palverify::launcher_can_start(
                 snapshot_.status,
-                snapshot_.payload_installed
+                snapshot_.payload_installed,
+                snapshot_.preflight_succeeded
             )
             || !snapshot_.game_root.has_value()
             || !snapshot_.manifest.has_value()) {
             return;
         }
-        if (!start_client_agent(*snapshot_.game_root)) {
-            snapshot_.headline = L"Không thể mở PalVerify";
-            snapshot_.detail = L"Hãy bấm làm mới để tự sửa bản cài.";
-            assign_support_log(
-                snapshot_,
-                "CLIENT_START_FAILED",
-                "create-process-failed-"
-                    + std::to_string(GetLastError())
-            );
-            InvalidateRect(window_, nullptr, FALSE);
-            return;
+        const auto executable =
+            *snapshot_.game_root / "Mods" / "Workshop" / "PalVerify"
+            / "client" / "Scripts" / "PalVerifyClient.exe";
+        if (!client_agent_is_running(executable)) {
+            const auto client_start =
+                start_client_agent(*snapshot_.game_root);
+            if (!client_start.started) {
+                snapshot_.headline = L"Không thể mở PalVerify";
+                snapshot_.detail =
+                    L"Client đã thoát sớm. Bấm để xem mã lỗi.";
+                const auto start_detail =
+                    client_start.exit_code != STILL_ACTIVE
+                    ? "early-exit-"
+                        + std::to_string(client_start.exit_code)
+                    : "create-process-failed-"
+                        + std::to_string(client_start.win32_error);
+                assign_support_log(
+                    snapshot_,
+                    "CLIENT_START_FAILED",
+                    start_detail
+                );
+                InvalidateRect(window_, nullptr, FALSE);
+                return;
+            }
         }
+        client_recovery_attempted_ = false;
         snapshot_.headline = L"PalVerify đã sẵn sàng";
         snapshot_.detail = L"Đang mở Palworld qua Steam.";
         InvalidateRect(window_, nullptr, FALSE);
@@ -1573,6 +2173,7 @@ private:
     InteractiveButton hovered_button_{InteractiveButton::None};
     InteractiveButton pressed_button_{InteractiveButton::None};
     std::atomic_bool busy_{false};
+    bool client_recovery_attempted_{false};
     std::jthread worker_;
 };
 
@@ -1895,7 +2496,8 @@ void paint_launcher(HWND window, LauncherApp& app)
     const auto& snapshot = app.snapshot();
     const auto ready = palverify::launcher_can_start(
         snapshot.status,
-        snapshot.payload_installed
+        snapshot.payload_installed,
+        snapshot.preflight_succeeded
     );
     const auto start_hovered =
         app.hovered_button() == InteractiveButton::Start;
@@ -2147,7 +2749,11 @@ void paint_launcher(HWND window, LauncherApp& app)
     if (ready) {
         button = L"BẮT ĐẦU";
     } else if (snapshot.status == palverify::LauncherStatus::Ready) {
-        button = L"CÀI PALVERIFY THẤT BẠI";
+        button = snapshot.waiting_for_game_exit
+            ? L"HÃY THOÁT PALWORLD"
+            : snapshot.payload_installed
+            ? L"PALVERIFY KHÔNG HỢP LỆ"
+            : L"CÀI PALVERIFY THẤT BẠI";
     } else if (
         snapshot.status == palverify::LauncherStatus::GameUpdateRequired) {
         button = L"MỞ STEAM CẬP NHẬT";
@@ -2244,6 +2850,7 @@ auto CALLBACK window_proc(
     switch (message) {
     case WM_CREATE:
         app->refresh();
+        SetTimer(window, timer_client_watchdog, 5000, nullptr);
         return 0;
     case WM_PAINT:
         paint_launcher(window, *app);
@@ -2253,6 +2860,8 @@ auto CALLBACK window_proc(
     case WM_TIMER:
         if (wparam == timer_recheck) {
             app->refresh();
+        } else if (wparam == timer_client_watchdog) {
+            app->supervise_client();
         }
         return 0;
     case message_snapshot:
@@ -2391,6 +3000,7 @@ auto CALLBACK window_proc(
         break;
     case WM_DESTROY:
         KillTimer(window, timer_recheck);
+        KillTimer(window, timer_client_watchdog);
         PostQuitMessage(0);
         return 0;
     default:

@@ -7,20 +7,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	Endpoint        string `json:"endpoint"`
-	ServerToken     string `json:"serverToken"`
-	ServerID        string `json:"serverId"`
-	RestURL         string `json:"restUrl"`
-	RestToken       string `json:"restToken"`
-	IntervalSeconds int    `json:"intervalSeconds"`
+	Endpoint                string `json:"endpoint"`
+	ServerToken             string `json:"serverToken"`
+	ServerID                string `json:"serverId"`
+	RestURL                 string `json:"restUrl"`
+	RestToken               string `json:"restToken"`
+	IntervalSeconds         int    `json:"intervalSeconds"`
+	DiscordWebhookURL       string `json:"discordWebhookUrl,omitempty"`
+	DisciplineStatePath     string `json:"disciplineStatePath,omitempty"`
+	PalDefenderLogDirectory string `json:"palDefenderLogDirectory,omitempty"`
 }
 
 func (config Config) Validate() error {
@@ -43,8 +48,15 @@ func (config Config) Validate() error {
 		strings.TrimSpace(config.RestToken) == "" {
 		return errors.New("config is missing a required credential")
 	}
-	if config.IntervalSeconds < 5 || config.IntervalSeconds > 60 {
-		return errors.New("intervalSeconds must be between 5 and 60")
+	if config.IntervalSeconds < 1 || config.IntervalSeconds > 60 {
+		return errors.New("intervalSeconds must be between 1 and 60")
+	}
+	if err := validateDiscordWebhookURL(config.DiscordWebhookURL); err != nil {
+		return err
+	}
+	if strings.TrimSpace(config.PalDefenderLogDirectory) != "" &&
+		!filepath.IsAbs(config.PalDefenderLogDirectory) {
+		return errors.New("PalDefender log directory must be absolute")
 	}
 	return nil
 }
@@ -73,6 +85,7 @@ type player struct {
 	Name   string `json:"Name"`
 	Status string `json:"Status"`
 	UserID string `json:"UserId"`
+	IP     string `json:"IP"`
 }
 
 type playersDocument struct {
@@ -91,11 +104,18 @@ type evaluateRequest struct {
 }
 
 type decision struct {
-	UserID string   `json:"userId"`
-	Name   string   `json:"name"`
-	Action string   `json:"action"`
-	Reason string   `json:"reason"`
-	Mods   []string `json:"mods"`
+	UserID     string   `json:"userId"`
+	Name       string   `json:"name"`
+	IP         string   `json:"-"`
+	Action     string   `json:"action"`
+	Reason     string   `json:"reason"`
+	Mods       []string `json:"mods"`
+	Violations []string `json:"violations"`
+	// Detail is the coordinator's compact, operator-facing explanation of
+	// the decision (e.g. "NO_VALID_REPORT", "STALE_REPORT age=16s",
+	// "PalVerify:VERSION_MISMATCH"). It never carries file/process
+	// inventories, only rule codes and bounded scalar facts.
+	Detail string `json:"detail"`
 }
 
 type evaluateResponse struct {
@@ -107,22 +127,89 @@ func SyncOnce(
 	client *http.Client,
 	config Config,
 	now time.Time,
+	logger *log.Logger,
 ) (int, error) {
+	state, err := loadDisciplineState(config.DisciplineStatePath)
+	if err != nil {
+		return 0, err
+	}
+	if err := processExpiredTemporaryBans(
+		ctx,
+		client,
+		config,
+		now,
+		&state,
+		logger,
+	); err != nil {
+		return 0, err
+	}
+	if collected, collectErr := collectPalDefenderAudits(
+		config,
+		&state,
+		now,
+	); collectErr != nil {
+		if logger != nil {
+			logger.Printf("[PalVerify] PalDefender log bridge failed: %v", collectErr)
+		}
+	} else if collected != 0 &&
+		strings.TrimSpace(config.DisciplineStatePath) != "" {
+		if err := saveDisciplineState(config.DisciplineStatePath, state); err != nil {
+			return 0, err
+		}
+	} else if state.palDefenderChanged &&
+		strings.TrimSpace(config.DisciplineStatePath) != "" {
+		if err := saveDisciplineState(config.DisciplineStatePath, state); err != nil {
+			return 0, err
+		}
+	}
+	flushDiscordAudits(ctx, client, config, &state, logger)
+	if processed, moderationErr := processAdminModerationAction(
+		ctx,
+		client,
+		config,
+	); moderationErr != nil {
+		if logger != nil {
+			logger.Printf("[PalVerify] admin moderation bridge failed: %v", moderationErr)
+		}
+	} else if processed && logger != nil {
+		logger.Printf("[PalVerify] admin moderation action processed")
+	}
+
 	document, err := fetchPlayers(ctx, client, config)
 	if err != nil {
 		return 0, err
 	}
 
 	online := make([]onlinePlayer, 0, len(document.Players))
+	playerIPs := make(map[string]string, len(document.Players))
 	for _, candidate := range document.Players {
 		if !strings.EqualFold(strings.TrimSpace(candidate.Status), "online") {
 			continue
 		}
 		userID := strings.TrimSpace(candidate.UserID)
 		name := strings.TrimSpace(candidate.Name)
-		if userID == "" || name == "" {
+		if userID == "" {
 			continue
 		}
+		if name == "" {
+			name = "unknown"
+		}
+		playerIPs[userID] = strings.TrimSpace(candidate.IP)
+		online = append(online, onlinePlayer{UserID: userID, Name: name})
+	}
+	seenOnline := make(map[string]struct{}, len(online))
+	for _, candidate := range online {
+		seenOnline[candidate.UserID] = struct{}{}
+	}
+	for userID, connected := range state.ConnectedPlayers {
+		if _, exists := seenOnline[userID]; exists {
+			continue
+		}
+		name := strings.TrimSpace(connected.Name)
+		if name == "" {
+			name = "unknown"
+		}
+		playerIPs[userID] = strings.TrimSpace(connected.IP)
 		online = append(online, onlinePlayer{UserID: userID, Name: name})
 	}
 
@@ -167,16 +254,29 @@ func SyncOnce(
 
 	kicks := 0
 	for _, result := range evaluation.Decisions {
+		result.IP = playerIPs[result.UserID]
 		if result.Action != "kick" {
 			continue
 		}
-		reason := "PalVerify: " + result.Reason
-		if len(result.Mods) != 0 {
-			reason += " (" + strings.Join(result.Mods, ",") + ")"
+		if result.Reason == "INTEGRITY_VIOLATION" {
+			enforced, err := enforceIntegrityDiscipline(
+				ctx,
+				client,
+				config,
+				now,
+				result,
+				&state,
+				logger,
+			)
+			if err != nil {
+				return kicks, err
+			}
+			if enforced {
+				kicks++
+			}
+			continue
 		}
-		if len(reason) > 180 {
-			reason = reason[:180]
-		}
+		reason := formatKickReason(result)
 		if err := kickPlayer(
 			ctx,
 			client,
@@ -187,8 +287,60 @@ func SyncOnce(
 			return kicks, err
 		}
 		kicks++
+		if logger != nil {
+			logger.Printf(
+				"[PalVerify] kicked user=%s reason=%s mods=%s detail=%q",
+				compactUserID(result.UserID),
+				result.Reason,
+				strings.Join(result.Mods, ","),
+				result.Detail,
+			)
+		}
+		queueKickAudit(config, &state, now, result)
+		if strings.TrimSpace(config.DisciplineStatePath) != "" &&
+			len(state.PendingAudits) != 0 {
+			if err := saveDisciplineState(
+				config.DisciplineStatePath,
+				state,
+			); err != nil {
+				return kicks, err
+			}
+		}
 	}
+	flushDiscordAudits(ctx, client, config, &state, logger)
 	return kicks, nil
+}
+
+func formatKickReason(result decision) string {
+	reason := "PalVerify: " + result.Reason
+	details := result.Mods
+	if len(result.Violations) != 0 {
+		details = result.Violations
+	}
+	switch {
+	case len(details) != 0:
+		reason += " (" + strings.Join(details, ",") + ")"
+	case strings.TrimSpace(result.Detail) != "":
+		// Fall back to the coordinator diagnostic detail (e.g.
+		// "NO_VALID_REPORT", "STALE_REPORT age=16s") so a bare reason code like
+		// MISSING_PALVERIFY still tells the player and the log what happened.
+		reason += " (" + strings.TrimSpace(result.Detail) + ")"
+	}
+	if len(reason) > 180 {
+		reason = reason[:180]
+	}
+	return reason
+}
+
+// compactUserID shortens a Steam user id for logs so the full identity is not
+// written verbatim to the game server console, matching the coordinator's
+// compact logging policy.
+func compactUserID(userID string) string {
+	userID = strings.TrimSpace(userID)
+	if len(userID) <= 12 {
+		return userID
+	}
+	return userID[:8] + "..." + userID[len(userID)-4:]
 }
 
 func fetchPlayers(

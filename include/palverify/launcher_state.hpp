@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace palverify {
 
@@ -75,11 +76,21 @@ enum class LauncherStatus {
 
 [[nodiscard]] auto launcher_can_start(
     LauncherStatus status,
-    bool payload_installed
+    bool payload_installed,
+    bool preflight_succeeded
+) -> bool;
+
+[[nodiscard]] auto launcher_can_prepare_payload(
+    LauncherStatus status,
+    bool game_running
 ) -> bool;
 
 [[nodiscard]] auto build_launcher_support_log(
     const LauncherFailureContext& failure
 ) -> std::string;
+
+[[nodiscard]] auto extract_not_whitelisted_mod_ids(
+    std::string_view preflight_output
+) -> std::vector<std::string>;
 
 }  // namespace palverify

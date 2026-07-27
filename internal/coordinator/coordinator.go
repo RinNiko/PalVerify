@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -30,9 +32,15 @@ const (
 	ActionWait    Action = "wait"
 )
 
-type AllowedMod struct {
+type AllowedPackage struct {
 	Version string `json:"version"`
 	Digest  string `json:"digest"`
+}
+
+type AllowedMod struct {
+	Version            string           `json:"version"`
+	Digest             string           `json:"digest"`
+	CompatiblePackages []AllowedPackage `json:"compatiblePackages,omitempty"`
 }
 
 type ReportedMod struct {
@@ -41,15 +49,43 @@ type ReportedMod struct {
 	Digest  string `json:"digest"`
 }
 
+type IntegrityEvidence struct {
+	Rule            string `json:"rule"`
+	Source          string `json:"source"`
+	FileName        string `json:"fileName,omitempty"`
+	SHA256          string `json:"sha256,omitempty"`
+	SignerName      string `json:"signerName,omitempty"`
+	FileDescription string `json:"fileDescription,omitempty"`
+	CompanyName     string `json:"companyName,omitempty"`
+	MatchReason     string `json:"matchReason"`
+	SignatureValid  bool   `json:"signatureValid"`
+}
+
 type Report struct {
-	ServerID        string        `json:"serverId"`
-	UserID          string        `json:"userId"`
-	ProtocolVersion string        `json:"protocolVersion"`
-	Challenge       string        `json:"challenge"`
-	Sequence        uint64        `json:"sequence"`
-	SentAt          time.Time     `json:"sentAt"`
-	Mods            []ReportedMod `json:"mods"`
-	Violations      []string      `json:"violations"`
+	ServerID          string              `json:"serverId"`
+	UserID            string              `json:"userId"`
+	ProtocolVersion   string              `json:"protocolVersion"`
+	Challenge         string              `json:"challenge"`
+	Sequence          uint64              `json:"sequence"`
+	SentAt            time.Time           `json:"sentAt"`
+	Mods              []ReportedMod       `json:"mods"`
+	Violations        []string            `json:"violations"`
+	ViolationEvidence []IntegrityEvidence `json:"violationEvidence,omitempty"`
+}
+
+type ClientPreflight struct {
+	ServerID          string              `json:"serverId"`
+	ProtocolVersion   string              `json:"protocolVersion"`
+	Mods              []ReportedMod       `json:"mods"`
+	Violations        []string            `json:"violations"`
+	ViolationEvidence []IntegrityEvidence `json:"violationEvidence,omitempty"`
+}
+
+type PreflightDecision struct {
+	Accepted bool     `json:"accepted"`
+	Reason   string   `json:"reason"`
+	Detail   string   `json:"detail,omitempty"`
+	Mods     []string `json:"mods,omitempty"`
 }
 
 type OnlinePlayer struct {
@@ -58,11 +94,17 @@ type OnlinePlayer struct {
 }
 
 type Decision struct {
-	UserID string   `json:"userId"`
-	Name   string   `json:"name"`
-	Action Action   `json:"action"`
-	Reason string   `json:"reason,omitempty"`
-	Mods   []string `json:"mods,omitempty"`
+	UserID     string   `json:"userId"`
+	Name       string   `json:"name"`
+	Action     Action   `json:"action"`
+	Reason     string   `json:"reason,omitempty"`
+	Mods       []string `json:"mods,omitempty"`
+	Violations []string `json:"violations,omitempty"`
+	// Detail carries a compact, operator-facing explanation of why this
+	// decision was reached (e.g. "NO_VALID_REPORT", "STALE_REPORT age=16s",
+	// "PalVerify:VERSION_MISMATCH"). It never contains file/process
+	// inventories, only rule codes and bounded scalar facts.
+	Detail string `json:"detail,omitempty"`
 }
 
 type LauncherManifest struct {
@@ -209,6 +251,12 @@ func (store *Store) AcceptReport(report Report, now time.Time) error {
 			return errors.New("invalid integrity violation")
 		}
 	}
+	if err := validateIntegrityEvidence(
+		report.Violations,
+		report.ViolationEvidence,
+	); err != nil {
+		return err
+	}
 	if report.SentAt.IsZero() {
 		return errors.New("missing report timestamp")
 	}
@@ -217,6 +265,69 @@ func (store *Store) AcceptReport(report Report, now time.Time) error {
 	store.reports[report.UserID] = report
 	store.sequences[report.UserID] = report.Sequence
 	return nil
+}
+
+func (store *Store) EvaluatePreflight(
+	input ClientPreflight,
+) (PreflightDecision, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	input.ServerID = strings.TrimSpace(input.ServerID)
+	if !validCompactValue(input.ServerID, 64) {
+		return PreflightDecision{}, errors.New("invalid server id")
+	}
+	if input.ProtocolVersion != "3" {
+		return PreflightDecision{}, errors.New("unsupported protocol version")
+	}
+	if len(input.Mods) > maxReportedMods {
+		return PreflightDecision{}, errors.New("mod inventory is too large")
+	}
+	for _, mod := range input.Mods {
+		if !validCompactValue(mod.ID, 96) ||
+			!validCompactValue(mod.Version, 48) ||
+			!validDigest(mod.Digest) {
+			return PreflightDecision{}, errors.New("invalid mod descriptor")
+		}
+	}
+	if len(input.Violations) > 16 {
+		return PreflightDecision{}, errors.New("too many integrity violations")
+	}
+	for _, violation := range input.Violations {
+		if !validCompactValue(violation, 64) {
+			return PreflightDecision{}, errors.New("invalid integrity violation")
+		}
+	}
+	if err := validateIntegrityEvidence(
+		input.Violations,
+		input.ViolationEvidence,
+	); err != nil {
+		return PreflightDecision{}, err
+	}
+
+	if len(input.Violations) != 0 {
+		return PreflightDecision{
+			Accepted: false,
+			Reason:   "INTEGRITY_VIOLATION",
+			Detail: integrityDetail(
+				input.Violations,
+				input.ViolationEvidence,
+			),
+		}, nil
+	}
+	rejected, detail := rejectedModIDs(input.Mods, store.config.AllowedMods)
+	if len(rejected) != 0 {
+		return PreflightDecision{
+			Accepted: false,
+			Reason:   "UNAPPROVED_MOD",
+			Detail:   detail,
+			Mods:     rejected,
+		}, nil
+	}
+	return PreflightDecision{
+		Accepted: true,
+		Reason:   "VERIFIED",
+	}, nil
 }
 
 func (store *Store) Evaluate(
@@ -268,6 +379,7 @@ func (store *Store) Evaluate(
 				Name:   player.Name,
 				Action: action,
 				Reason: reason,
+				Detail: reportAbsenceDetail(report, reported, now),
 			})
 			continue
 		}
@@ -278,11 +390,19 @@ func (store *Store) Evaluate(
 				Name:   player.Name,
 				Action: ActionKick,
 				Reason: "INTEGRITY_VIOLATION",
+				Violations: append(
+					[]string(nil),
+					report.Violations...,
+				),
+				Detail: integrityDetail(
+					report.Violations,
+					report.ViolationEvidence,
+				),
 			})
 			continue
 		}
 
-		rejected := rejectedModIDs(report.Mods, store.config.AllowedMods)
+		rejected, ruleDetail := rejectedModIDs(report.Mods, store.config.AllowedMods)
 		if len(rejected) != 0 {
 			decisions = append(decisions, Decision{
 				UserID: player.UserID,
@@ -290,6 +410,7 @@ func (store *Store) Evaluate(
 				Action: ActionKick,
 				Reason: "UNAPPROVED_MOD",
 				Mods:   rejected,
+				Detail: ruleDetail,
 			})
 			continue
 		}
@@ -318,32 +439,226 @@ func (store *Store) Evaluate(
 	return decisions
 }
 
+// rejectedModIDs returns the sorted list of rejected mod IDs and a compact,
+// per-mod detail string naming the exact rule each rejection tripped, so an
+// operator reading the logs can tell a version drift apart from a rebuilt
+// payload (DIGEST_MISMATCH), an unknown mod, or a mod the client failed to
+// report at all. Multiple copies are accepted only when every descriptor
+// independently matches an approved exact package.
 func rejectedModIDs(
 	reported []ReportedMod,
 	allowed map[string]AllowedMod,
-) []string {
+) ([]string, string) {
 	rejected := make([]string, 0)
+	rules := make(map[string]string)
 	seen := make(map[string]struct{}, len(reported))
 	for _, mod := range reported {
 		approved, exists := allowed[mod.ID]
-		if _, duplicate := seen[mod.ID]; duplicate {
-			rejected = append(rejected, mod.ID)
-			continue
-		}
 		seen[mod.ID] = struct{}{}
-		if !exists ||
-			mod.Version != approved.Version ||
-			!strings.EqualFold(mod.Digest, approved.Digest) {
-			rejected = append(rejected, mod.ID)
+		rule := ""
+		switch {
+		case !exists:
+			rule = "NOT_WHITELISTED"
+		default:
+			rule = packagePolicyRule(mod, approved)
+		}
+		if rule != "" {
+			if _, alreadyRejected := rules[mod.ID]; !alreadyRejected {
+				rejected = append(rejected, mod.ID)
+			}
+			rules[mod.ID] = rule
 		}
 	}
 	for id := range allowed {
 		if _, exists := seen[id]; !exists {
 			rejected = append(rejected, id)
+			rules[id] = "REQUIRED_MOD_MISSING"
 		}
 	}
 	sort.Strings(rejected)
-	return rejected
+	parts := make([]string, 0, len(rejected))
+	for _, id := range rejected {
+		parts = append(parts, id+":"+rules[id])
+	}
+	return rejected, strings.Join(parts, ",")
+}
+
+func packagePolicyRule(mod ReportedMod, approved AllowedMod) string {
+	candidates := make(
+		[]AllowedPackage,
+		0,
+		1+len(approved.CompatiblePackages),
+	)
+	candidates = append(candidates, AllowedPackage{
+		Version: approved.Version,
+		Digest:  approved.Digest,
+	})
+	candidates = append(candidates, approved.CompatiblePackages...)
+
+	versionMatched := false
+	for _, candidate := range candidates {
+		if candidate.Version != "*" && mod.Version != candidate.Version {
+			continue
+		}
+		versionMatched = true
+		if candidate.Digest == "*" ||
+			strings.EqualFold(mod.Digest, candidate.Digest) {
+			return ""
+		}
+	}
+	if versionMatched {
+		return "DIGEST_MISMATCH"
+	}
+	return "VERSION_MISMATCH"
+}
+
+// reportAbsenceDetail distinguishes a client that never delivered a report from
+// one whose report arrived but is too old (or clock-skewed into the future),
+// including the observed age so MISSING_PALVERIFY kicks are debuggable.
+func reportAbsenceDetail(report Report, reported bool, now time.Time) string {
+	if !reported {
+		return "NO_VALID_REPORT"
+	}
+	if report.SentAt.After(now.Add(30 * time.Second)) {
+		return fmt.Sprintf(
+			"CLOCK_SKEW skew=%s",
+			report.SentAt.Sub(now).Round(time.Second),
+		)
+	}
+	return fmt.Sprintf(
+		"STALE_REPORT age=%s",
+		now.Sub(report.SentAt).Round(time.Second),
+	)
+}
+
+func validateIntegrityEvidence(
+	violations []string,
+	evidence []IntegrityEvidence,
+) error {
+	if len(evidence) > 8 {
+		return errors.New("too much integrity evidence")
+	}
+	rules := make(map[string]struct{}, len(violations))
+	for _, violation := range violations {
+		rules[violation] = struct{}{}
+	}
+	for _, item := range evidence {
+		if _, exists := rules[item.Rule]; !exists ||
+			!validCompactValue(item.Rule, 64) {
+			return errors.New("invalid integrity evidence rule")
+		}
+		if item.Source != "module" &&
+			item.Source != "memory" &&
+			item.Source != "process" {
+			return errors.New("invalid integrity evidence source")
+		}
+		fileName := strings.TrimSpace(item.FileName)
+		if fileName != "" &&
+			(!validCompactValue(fileName, 128) ||
+				strings.ContainsAny(fileName, `/\:`)) {
+			return errors.New("invalid integrity evidence file name")
+		}
+		if item.Source == "module" && fileName == "" {
+			return errors.New("missing integrity evidence file name")
+		}
+		if item.SHA256 != "" &&
+			(len(item.SHA256) != 64 || !validDigest(item.SHA256)) {
+			return errors.New("invalid integrity evidence digest")
+		}
+		if item.SignerName != "" &&
+			!validEvidenceText(item.SignerName, 128) {
+			return errors.New("invalid integrity evidence signer")
+		}
+		if item.FileDescription != "" &&
+			!validEvidenceText(item.FileDescription, 160) {
+			return errors.New("invalid integrity evidence description")
+		}
+		if item.CompanyName != "" &&
+			!validEvidenceText(item.CompanyName, 128) {
+			return errors.New("invalid integrity evidence company")
+		}
+		if !validCompactValue(item.MatchReason, 64) {
+			return errors.New("invalid integrity evidence match")
+		}
+	}
+	return nil
+}
+
+func validEvidenceText(value string, maximum int) bool {
+	value = strings.TrimSpace(value)
+	if value == "" ||
+		!utf8.ValidString(value) ||
+		utf8.RuneCountInString(value) > maximum {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
+}
+
+func integrityDetail(
+	violations []string,
+	evidence []IntegrityEvidence,
+) string {
+	parts := append([]string(nil), violations...)
+	for _, item := range evidence {
+		attributes := []string{
+			"source=" + safeIntegrityScalar(item.Source),
+			"match=" + safeIntegrityScalar(item.MatchReason),
+		}
+		if item.FileName != "" {
+			attributes = append(
+				attributes,
+				"file="+safeIntegrityScalar(item.FileName),
+			)
+		}
+		if item.SHA256 != "" {
+			attributes = append(attributes, "sha256="+item.SHA256)
+		}
+		if item.SignerName != "" {
+			attributes = append(
+				attributes,
+				"signer="+safeIntegrityScalar(item.SignerName),
+			)
+		}
+		if item.FileDescription != "" {
+			attributes = append(
+				attributes,
+				"description="+safeIntegrityScalar(item.FileDescription),
+			)
+		}
+		if item.CompanyName != "" {
+			attributes = append(
+				attributes,
+				"company="+safeIntegrityScalar(item.CompanyName),
+			)
+		}
+		signature := "invalid"
+		if item.SignatureValid {
+			signature = "valid"
+		}
+		attributes = append(attributes, "signature="+signature)
+		parts = append(
+			parts,
+			item.Rule+"["+strings.Join(attributes, ",")+"]",
+		)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func safeIntegrityScalar(value string) string {
+	replacer := strings.NewReplacer(
+		"[", " ",
+		"]", " ",
+		",", " ",
+		";", " ",
+		"=", " ",
+		"|", " ",
+	)
+	return strings.Join(strings.Fields(replacer.Replace(value)), " ")
 }
 
 func validCompactValue(value string, max int) bool {
@@ -353,6 +668,21 @@ func validCompactValue(value string, max int) bool {
 	}
 	for _, character := range value {
 		if character < 0x20 || character > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func validPlayerName(value string, max int) bool {
+	value = strings.TrimSpace(value)
+	if value == "" ||
+		!utf8.ValidString(value) ||
+		utf8.RuneCountInString(value) > max {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
 			return false
 		}
 	}
@@ -398,6 +728,22 @@ func NewHandler(
 	serverToken string,
 	now func() time.Time,
 	logger *log.Logger,
+) http.Handler {
+	return NewHandlerWithAudit(
+		store,
+		serverToken,
+		now,
+		logger,
+		nil,
+	)
+}
+
+func NewHandlerWithAudit(
+	store *Store,
+	serverToken string,
+	now func() time.Time,
+	logger *log.Logger,
+	audit AuditSink,
 ) http.Handler {
 	if now == nil {
 		now = time.Now
@@ -448,6 +794,26 @@ func NewHandler(
 			now(),
 		)
 		if err != nil {
+			if logger != nil {
+				logger.Printf(
+					"challenge_rejected user=%s reason=%q",
+					compactUserID(strings.TrimSpace(input.UserID)),
+					err.Error(),
+				)
+			}
+			if audit != nil {
+				audit.Emit(request.Context(), AuditEvent{
+					OccurredAt: now().UTC(),
+					ServerID:   input.ServerID,
+					PlayerName: "unknown",
+					PlayerRef: auditPlayerReference(
+						serverToken,
+						input.UserID,
+					),
+					Action: "CHALLENGE_REJECTED",
+					Reason: err.Error(),
+				})
+			}
 			http.Error(response, "active session required", http.StatusConflict)
 			return
 		}
@@ -456,6 +822,73 @@ func NewHandler(
 			Challenge: challenge,
 		}); err != nil && logger != nil {
 			logger.Printf("encode challenge response: %v", err)
+		}
+	})
+	mux.HandleFunc("POST /v1/client/preflight", func(
+		response http.ResponseWriter,
+		request *http.Request,
+	) {
+		setPrivateHeaders(response)
+		if !jsonMediaType(request.Header.Get("Content-Type")) {
+			http.Error(
+				response,
+				"content type must be application/json",
+				http.StatusUnsupportedMediaType,
+			)
+			return
+		}
+		var input ClientPreflight
+		if err := decodeLimitedJSON(request, &input); err != nil {
+			http.Error(response, "invalid preflight", http.StatusBadRequest)
+			return
+		}
+		decision, err := store.EvaluatePreflight(input)
+		if err != nil {
+			if logger != nil {
+				logger.Printf("preflight_invalid reason=%q", err.Error())
+			}
+			if audit != nil {
+				audit.Emit(request.Context(), AuditEvent{
+					OccurredAt: now().UTC(),
+					ServerID:   input.ServerID,
+					PlayerName: "unknown",
+					PlayerRef:  "unavailable",
+					Action:     "PREFLIGHT_INVALID",
+					Reason:     err.Error(),
+				})
+			}
+			http.Error(response, "invalid preflight", http.StatusBadRequest)
+			return
+		}
+		if logger != nil {
+			logger.Printf(
+				"client_preflight accepted=%t reason=%s detail=%q",
+				decision.Accepted,
+				decision.Reason,
+				decision.Detail,
+			)
+		}
+		if audit != nil && !decision.Accepted {
+			audit.Emit(request.Context(), AuditEvent{
+				OccurredAt: now().UTC(),
+				ServerID:   input.ServerID,
+				PlayerName: "unknown",
+				PlayerRef:  "unavailable",
+				Action:     "PREFLIGHT_REJECTED",
+				Reason:     decision.Reason,
+				Detail:     decision.Detail,
+				Mods:       append([]string(nil), decision.Mods...),
+				Rules: auditRulesWithEvidence(
+					decision.Reason,
+					input.Violations,
+					decision.Detail,
+				),
+			})
+		}
+		response.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(response).Encode(decision); err != nil &&
+			logger != nil {
+			logger.Printf("encode preflight response: %v", err)
 		}
 	})
 	mux.HandleFunc("POST /v1/client/report", func(
@@ -477,6 +910,26 @@ func NewHandler(
 			return
 		}
 		if err := store.AcceptReport(report, now()); err != nil {
+			if logger != nil {
+				logger.Printf(
+					"report_rejected user=%s reason=%q",
+					compactUserID(strings.TrimSpace(report.UserID)),
+					err.Error(),
+				)
+			}
+			if audit != nil {
+				audit.Emit(request.Context(), AuditEvent{
+					OccurredAt: now().UTC(),
+					ServerID:   report.ServerID,
+					PlayerName: "unknown",
+					PlayerRef: auditPlayerReference(
+						serverToken,
+						report.UserID,
+					),
+					Action: "REPORT_REJECTED",
+					Reason: err.Error(),
+				})
+			}
 			http.Error(response, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -492,6 +945,28 @@ func NewHandler(
 				strings.Join(modIDs, ","),
 				strings.Join(report.Violations, ","),
 			)
+		}
+		if audit != nil && len(report.Violations) != 0 {
+			detail := integrityDetail(
+				report.Violations,
+				report.ViolationEvidence,
+			)
+			audit.Emit(request.Context(), AuditEvent{
+				OccurredAt: now().UTC(),
+				ServerID:   report.ServerID,
+				PlayerName: "unknown",
+				PlayerRef: auditPlayerReference(
+					serverToken,
+					report.UserID,
+				),
+				Action: "INTEGRITY_REPORT_ACCEPTED",
+				Reason: "INTEGRITY_VIOLATION",
+				Detail: detail,
+				Rules: append(
+					[]string(nil),
+					report.Violations...,
+				),
+			})
 		}
 		response.WriteHeader(http.StatusAccepted)
 	})
@@ -521,7 +996,7 @@ func NewHandler(
 		}
 		for _, player := range input.Players {
 			if !validCompactValue(player.UserID, 128) ||
-				!validCompactValue(player.Name, 96) {
+				!validPlayerName(player.Name, 96) {
 				http.Error(
 					response,
 					"invalid player descriptor",
@@ -531,16 +1006,38 @@ func NewHandler(
 			}
 		}
 		decisions := store.Evaluate(input.ServerID, input.Players, now())
-		if logger != nil {
-			for _, decision := range decisions {
-				if decision.Action == ActionKick {
-					logger.Printf(
-						"kick_decision user=%s reason=%s mods=%s",
-						compactUserID(decision.UserID),
+		for _, decision := range decisions {
+			if decision.Action != ActionKick {
+				continue
+			}
+			if logger != nil {
+				logger.Printf(
+					"kick_decision user=%s reason=%s mods=%s detail=%q",
+					compactUserID(decision.UserID),
+					decision.Reason,
+					strings.Join(decision.Mods, ","),
+					decision.Detail,
+				)
+			}
+			if audit != nil {
+				audit.Emit(request.Context(), AuditEvent{
+					OccurredAt: now().UTC(),
+					ServerID:   input.ServerID,
+					PlayerName: safeAuditPlayerName(decision.Name),
+					PlayerRef: auditPlayerReference(
+						serverToken,
+						decision.UserID,
+					),
+					Action: "KICK_DECISION",
+					Reason: decision.Reason,
+					Detail: decision.Detail,
+					Mods:   append([]string(nil), decision.Mods...),
+					Rules: auditRulesWithEvidence(
 						decision.Reason,
-						strings.Join(decision.Mods, ","),
-					)
-				}
+						decision.Violations,
+						decision.Detail,
+					),
+				})
 			}
 		}
 		response.Header().Set("Content-Type", "application/json")

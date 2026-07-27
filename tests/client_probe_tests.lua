@@ -1,6 +1,7 @@
 local commands = {}
 local logs = {}
 local hooks = {}
+local watchdog = nil
 
 local original_print = print
 print = function(message)
@@ -15,16 +16,24 @@ RegisterHook = function(path, callback)
     hooks[path] = callback
 end
 
+LoopAsync = function(_, callback)
+    watchdog = callback
+end
+
 local original_execute = os.execute
 os.execute = function(command)
     table.insert(commands, command)
     return true, "exit", 0
 end
 
+local original_open = io.open
+io.open = function()
+    return nil
+end
+
 local loaded, error_message =
     pcall(dofile, "packaging/client/Scripts/main.lua")
 
-os.execute = original_execute
 print = original_print
 
 local function fail(message)
@@ -35,17 +44,14 @@ end
 if not loaded then
     fail("client main failed to load: " .. tostring(error_message))
 end
-if #commands ~= 2 then
-    fail("expected queue preparation and one client agent launch")
+if #commands ~= 0 then
+    fail("client Lua must never launch cmd.exe or PalVerifyClient.exe")
 end
-if not string.find(
-    commands[2],
-    "PalVerifyClient.exe",
-    1,
-    true
-) then
-    fail("launch command must target PalVerifyClient.exe")
+if watchdog ~= nil then
+    fail("client Lua must not own the PalVerifyClient process lifecycle")
 end
+os.execute = original_execute
+io.open = original_open
 local chat_hook =
     hooks["/Script/Pal.PalGameStateInGame:BroadcastChatMessage"]
 if type(chat_hook) ~= "function" then
@@ -54,7 +60,6 @@ end
 
 local queued_command = ""
 local cleared = false
-local original_open = io.open
 local original_rename = os.rename
 io.open = function()
     return {
@@ -104,4 +109,6 @@ if not cleared then
     fail("private UI transport message must be hidden from chat")
 end
 
-original_print("PASS client probe launches agent and intercepts private UI commands")
+original_print(
+    "PASS client probe delegates lifecycle and intercepts private UI commands"
+)

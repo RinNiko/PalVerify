@@ -736,8 +736,8 @@ auto inspect_process_executable(const std::filesystem::path& executable)
     };
 }
 
-auto detect_module_rules(std::span<const ModuleEvidence> modules)
-    -> std::vector<ProcessRuleId>
+auto detect_module_matches(std::span<const ModuleEvidence> modules)
+    -> std::vector<ModuleRuleMatch>
 {
     constexpr std::string_view palforge_sha256 =
         "4d0597dc7ba65b65106743afbadd70c2045f9e07725bdf4629c0d057a4469bba";
@@ -751,8 +751,9 @@ auto detect_module_rules(std::span<const ModuleEvidence> modules)
         std::string_view{"we-graphics-hook64.dll"},
     };
     for (const auto& module : modules) {
+        std::string_view match_reason;
         if (module.sha256 == palforge_sha256) {
-            return {ProcessRuleId::InjectedModuleDetected};
+            match_reason = "KNOWN_INJECTED_MODULE_HASH";
         }
         const auto wemod_publisher =
             module.signature_valid
@@ -767,15 +768,44 @@ auto detect_module_rules(std::span<const ModuleEvidence> modules)
                 break;
             }
         }
-        if (wemod_publisher || wemod_metadata || wand_module_name) {
-            return {ProcessRuleId::InjectedModuleDetected};
+        if (match_reason.empty() && wemod_publisher) {
+            match_reason = "WEMOD_MODULE_SIGNATURE";
+        } else if (match_reason.empty() && wemod_metadata) {
+            match_reason = "WEMOD_MODULE_METADATA";
+        } else if (match_reason.empty() && wand_module_name) {
+            match_reason = "WEMOD_MODULE_NAME";
         }
-        if (!module.signature_valid && !module.system_location
+        if (match_reason.empty() && !module.signature_valid
+            && !module.system_location
             && !module.game_location) {
-            return {ProcessRuleId::InjectedModuleDetected};
+            match_reason = "UNSIGNED_EXTERNAL_MODULE";
+        }
+        if (!match_reason.empty()) {
+            return {{
+                .rule = ProcessRuleId::InjectedModuleDetected,
+                .image_name = std::string{module.image_name},
+                .sha256 = std::string{module.sha256},
+                .signer_name = std::string{module.signer_name},
+                .file_description = std::string{module.file_description},
+                .company_name = std::string{module.company_name},
+                .match_reason = std::string{match_reason},
+                .signature_valid = module.signature_valid,
+            }};
         }
     }
     return {};
+}
+
+auto detect_module_rules(std::span<const ModuleEvidence> modules)
+    -> std::vector<ProcessRuleId>
+{
+    const auto matches = detect_module_matches(modules);
+    std::vector<ProcessRuleId> rules;
+    rules.reserve(matches.size());
+    for (const auto& match : matches) {
+        rules.push_back(match.rule);
+    }
+    return rules;
 }
 
 auto looks_like_manual_map_candidate(std::span<const std::byte> header)
@@ -861,14 +891,14 @@ auto scan_palworld_modules(const std::filesystem::path& game_root)
 {
     const auto process_id = palworld_process_id();
     if (!process_id.has_value()) {
-        return {.available = false, .rules = {}};
+        return {.available = false, .rules = {}, .matches = {}};
     }
     const auto snapshot = CreateToolhelp32Snapshot(
         TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32,
         *process_id
     );
     if (snapshot == INVALID_HANDLE_VALUE) {
-        return {.available = false, .rules = {}};
+        return {.available = false, .rules = {}, .matches = {}};
     }
 
     const auto windows_root = windows_directory();
@@ -893,7 +923,7 @@ auto scan_palworld_modules(const std::filesystem::path& game_root)
         } while (Module32NextW(snapshot, &entry) != FALSE);
     } else {
         CloseHandle(snapshot);
-        return {.available = false, .rules = {}};
+        return {.available = false, .rules = {}, .matches = {}};
     }
     CloseHandle(snapshot);
 
@@ -911,11 +941,30 @@ auto scan_palworld_modules(const std::filesystem::path& game_root)
             .company_name = module.file.company_name,
         });
     }
-    auto rules = detect_module_rules(evidence);
+    auto matches = detect_module_matches(evidence);
+    std::vector<ProcessRuleId> rules;
+    rules.reserve(matches.size() + 1);
+    for (const auto& match : matches) {
+        rules.push_back(match.rule);
+    }
     if (manual_map_detected(*process_id)) {
         rules.push_back(ProcessRuleId::ManualMapDetected);
+        matches.push_back({
+            .rule = ProcessRuleId::ManualMapDetected,
+            .image_name = {},
+            .sha256 = {},
+            .signer_name = {},
+            .file_description = {},
+            .company_name = {},
+            .match_reason = "PRIVATE_EXECUTABLE_PE_HEADER",
+            .signature_valid = false,
+        });
     }
-    return {.available = true, .rules = std::move(rules)};
+    return {
+        .available = true,
+        .rules = std::move(rules),
+        .matches = std::move(matches),
+    };
 }
 
 }  // namespace palverify

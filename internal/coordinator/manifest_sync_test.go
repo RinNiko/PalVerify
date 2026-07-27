@@ -62,6 +62,11 @@ func TestApplyReleaseManifestUpdatesLauncherAndWhitelist(t *testing.T) {
 	if allowed.Version != "0.5.8" || allowed.Digest != testDigestB {
 		t.Fatalf("unexpected PalVerify whitelist: %#v", allowed)
 	}
+	if len(allowed.CompatiblePackages) != 1 ||
+		allowed.CompatiblePackages[0].Version != "0.5.7" ||
+		allowed.CompatiblePackages[0].Digest != testDigestA {
+		t.Fatalf("previous exact package was not retained: %#v", allowed)
+	}
 }
 
 func TestApplyReleaseManifestRejectsInvalidDigestAndKeepsWhitelist(

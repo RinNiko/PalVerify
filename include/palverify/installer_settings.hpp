@@ -27,6 +27,12 @@ struct InstallResult {
     std::string detail;
 };
 
+struct ModRemediationResult {
+    bool success;
+    std::size_t quarantined;
+    std::string detail;
+};
+
 [[nodiscard]] auto install_palverify_payload(
     const std::filesystem::path& game_root,
     const std::filesystem::path& payload_root
@@ -36,5 +42,10 @@ struct InstallResult {
     const std::filesystem::path& game_root,
     std::span<const PayloadFile> files
 ) -> InstallResult;
+
+[[nodiscard]] auto quarantine_unapproved_mods(
+    const std::filesystem::path& game_root,
+    std::span<const std::string> mod_ids
+) -> ModRemediationResult;
 
 }  // namespace palverify

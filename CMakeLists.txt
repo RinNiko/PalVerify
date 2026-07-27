@@ -132,6 +132,7 @@ if(WIN32)
     add_executable(PalVerifyClient
         apps/client_agent/main.cpp
         apps/client_agent/client_ui_windows.cpp
+        resources/client/PalVerifyClient.manifest
     )
     target_include_directories(
         PalVerifyClient
@@ -244,6 +245,33 @@ if(WIN32)
         PALVERIFY_EMBEDDED_PAYLOAD_RC
         "${PALVERIFY_GENERATED_DIRECTORY}/embedded-palverify-payload.rc"
     )
+    set(
+        PALVERIFY_MANAGED_UE4SS_SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/UE4SSExperimentalPW"
+    )
+    file(
+        GLOB_RECURSE
+        PALVERIFY_MANAGED_UE4SS_FILES
+        CONFIGURE_DEPENDS
+        LIST_DIRECTORIES false
+        RELATIVE "${PALVERIFY_MANAGED_UE4SS_SOURCE}"
+        "${PALVERIFY_MANAGED_UE4SS_SOURCE}/*"
+    )
+    set(PALVERIFY_MANAGED_UE4SS_PAYLOAD_ARGUMENTS)
+    set(PALVERIFY_MANAGED_UE4SS_DEPENDENCIES)
+    foreach(relative_path IN LISTS PALVERIFY_MANAGED_UE4SS_FILES)
+        list(
+            APPEND
+            PALVERIFY_MANAGED_UE4SS_PAYLOAD_ARGUMENTS
+            "managed/UE4SSExperimentalPW/${relative_path}"
+            "${PALVERIFY_MANAGED_UE4SS_SOURCE}/${relative_path}"
+        )
+        list(
+            APPEND
+            PALVERIFY_MANAGED_UE4SS_DEPENDENCIES
+            "${PALVERIFY_MANAGED_UE4SS_SOURCE}/${relative_path}"
+        )
+    endforeach()
     add_custom_command(
         OUTPUT
             "${PALVERIFY_EMBEDDED_PAYLOAD}"
@@ -269,6 +297,7 @@ if(WIN32)
             "${CMAKE_CURRENT_SOURCE_DIR}/packaging/client/Scripts/main.lua"
             "client/Scripts/PalVerifyClient.exe"
             "$<TARGET_FILE:PalVerifyClient>"
+            ${PALVERIFY_MANAGED_UE4SS_PAYLOAD_ARGUMENTS}
         DEPENDS
             palverify_payload_packer
             PalVerifyClient
@@ -278,6 +307,7 @@ if(WIN32)
             packaging/client/enabled.txt
             packaging/client/Scripts/config.json
             packaging/client/Scripts/main.lua
+            ${PALVERIFY_MANAGED_UE4SS_DEPENDENCIES}
         COMMENT
             "Compressing PalVerify payload into Pal3Mien PE resource"
         VERBATIM
@@ -324,6 +354,19 @@ endif()
 
 if(PALVERIFY_BUILD_TESTS)
     enable_testing()
+
+    if(WIN32)
+        add_test(
+            NAME palverify_client_manifest_tests
+            COMMAND
+                powershell
+                -NoProfile
+                -ExecutionPolicy Bypass
+                -File
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/windows_client_manifest_tests.ps1"
+                "$<TARGET_FILE:PalVerifyClient>"
+        )
+    endif()
 
     add_executable(palverify_core_tests
         tests/core_tests.cpp

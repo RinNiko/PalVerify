@@ -86,11 +86,27 @@ func main() {
 		cachePath,
 		log.Default(),
 	)
-	handler := coordinator.NewHandler(
+	var audit coordinator.AuditSink
+	webhookURL := strings.TrimSpace(
+		os.Getenv("PALVERIFY_DISCORD_WEBHOOK_URL"),
+	)
+	if webhookURL != "" {
+		sink, err := coordinator.NewDiscordAuditSink(
+			webhookURL,
+			nil,
+			log.Default(),
+		)
+		if err != nil {
+			log.Fatalf("invalid Discord audit configuration: %v", err)
+		}
+		audit = sink
+	}
+	handler := coordinator.NewHandlerWithAudit(
 		store,
 		serverToken,
 		time.Now,
 		log.Default(),
+		audit,
 	)
 	server := &http.Server{
 		Addr:              "127.0.0.1:18801",
@@ -101,7 +117,11 @@ func main() {
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    16 * 1024,
 	}
-	log.Printf("PalVerify coordinator listening on %s", server.Addr)
+	log.Printf(
+		"PalVerify coordinator listening on %s discord_audit=%t",
+		server.Addr,
+		audit != nil,
+	)
 	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}

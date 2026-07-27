@@ -44,14 +44,20 @@ $basePackager = Require-File "scripts\package.ps1"
 $builder = Require-File "scripts\build.ps1"
 $launcherSource = Require-File "apps\launcher\main.cpp"
 $launcherStateSource = Require-File "src\launcher_state.cpp"
+$installerSource = Require-File "src\installer_settings.cpp"
 $launcherResources = Require-File "resources\launcher\launcher.rc"
 $launcherResourceHeader = Require-File "resources\launcher\resource.h"
 $payloadPacker = Require-File "apps\payload_packer\main.cpp"
 $payloadArchive = Require-File "src\payload_archive.cpp"
 $cmake = Require-File "CMakeLists.txt"
 $clientAgentSource = Require-File "apps\client_agent\main.cpp"
+$clientProbe = Require-File "packaging\client\Scripts\main.lua"
 $serverAgentSource = Require-File "cmd\palverify-server\main.go"
 $coordinatorSource = Require-File "cmd\palverify-coordinator\main.go"
+$serverDisciplineSource = Require-File `
+    "internal\serveragent\discipline.go"
+$coordinatorAuditSource = Require-File `
+    "internal\coordinator\audit.go"
 $manifestSyncSource = Require-File `
     "internal\coordinator\manifest_sync.go"
 $clientConfig = Require-File "packaging\client\Scripts\config.json"
@@ -162,10 +168,30 @@ Require-Text $cmake 'target_link_options(PalVerifyClient PRIVATE /Brepro)' `
     "PalVerify client builds must be reproducible across identical rebuilds"
 Require-Text $cmake 'target_link_options(Pal3Mien PRIVATE /Brepro)' `
     "launcher builds must be reproducible across identical rebuilds"
+Require-Text $cmake 'third_party/UE4SSExperimentalPW' `
+    "launcher payload must bundle the managed UE4SS runtime"
+Require-Text $cmake 'managed/UE4SSExperimentalPW/' `
+    "launcher payload must route managed UE4SS files separately"
+Require-Text $installerSource 'install_managed_statue_markers' `
+    "installer must deploy StatueMapMarkers into the active UE4SS package"
+Require-Text $installerSource 'local_workshop_root / "3625223587"' `
+    "installer must isolate the server profile from external Steam Workshop subscriptions"
+Require-Text $installerSource 'quarantine_unapproved_mods' `
+    "installer must quarantine exact rejected mods without deleting them"
+Require-Text $launcherStateSource 'extract_not_whitelisted_mod_ids' `
+    "launcher must parse exact NOT_WHITELISTED preflight failures"
+Require-Text $installerSource 'StatueMapMarkers : 1' `
+    "installer must activate StatueMapMarkers in UE4SS mods.txt"
+Require-Text $installerSource 'PalVerify : 1' `
+    "installer must activate the PalVerify watchdog in UE4SS mods.txt"
 Require-Text $launcherResourceHeader '#define IDR_PALVERIFY_PAYLOAD 216' `
     "launcher resources must reserve a stable embedded payload resource ID"
 Require-Text $launcherSource 'unpack_payload_archive' `
     "launcher must unpack the embedded resource before installation"
+Require-Text $launcherSource 'stop_running_client' `
+    "launcher must stop an existing PalVerify client before replacing its payload"
+Require-Text $launcherSource 'CLIENT_STOP_BEFORE_INSTALL_FAILED' `
+    "launcher must expose a safe client-stop failure code"
 Require-Text $payloadPacker 'pack_payload_archive' `
     "payload packer must use the versioned compression format"
 Require-Text $payloadPacker 'IDR_PALVERIFY_PAYLOAD RCDATA' `
@@ -176,9 +202,14 @@ Require-Text $launcherSource 'PalVerifyClient.exe' `
     "launcher must start the installed PalVerify client agent"
 Require-Text $launcherSource 'CreateProcessW' `
     "launcher must create the client-agent process directly"
+Require-Text $launcherSource 'CLIENT_AUTOSTART_FAILED' `
+    "launcher must start the continuous client immediately after preflight"
 Require-Text $launcherSource `
-    'https://palworld-3-mien-website.vercel.app/' `
+    'L"https://ae3mien.net/"' `
     "launcher website fallback must open the Palworld 3 Mien website"
+Require-NoText $launcherSource `
+    'L"https://palworld-3-mien-website.vercel.app/"' `
+    "launcher website fallback must not expose the Vercel deployment URL"
 Require-NoText $launcherSource 'icon_settings' `
     "launcher must not render the removed theme/settings button"
 Require-Text $launcherSource 'draw_glass_panel' `
@@ -238,32 +269,36 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.2"' `
-    "launcher must use the client UI revision so installed clients update"
+Require-Text $launcherSource 'launcher_version = "1.0.20"' `
+    "launcher must use the single-owner client lifecycle revision"
+Require-Text $launcherSource 'palworld_is_running()' `
+    "launcher must detect a running Palworld process before installing mods"
+Require-Text $launcherSource 'waiting_for_game_exit' `
+    "launcher must automatically retry after Palworld exits"
 Require-Text $launcherSource 'launcher_display_version = "1.0"' `
     "launcher UI must keep the official v1.0 marketing version"
 Require-Text $launcherSource 'utf8_to_wide(launcher_display_version)' `
     "launcher UI must not expose the internal update revision"
 Require-Text $launcherSource `
-    'https://raw.githubusercontent.com/RinNiko/PalVerify/main/' `
-    "launcher manifest must use the stable raw GitHub endpoint"
+    'https://ae3mien.net/api/palverify/v1/launcher/manifest' `
+    "launcher manifest must use the website HTTPS endpoint"
 Require-Text $launcherSource `
     'WinHttpSetTimeouts(session, 10000, 10000, 20000, 20000)' `
     "launcher manifest request must tolerate slow GitHub connections"
-Require-Text $launcherSource 'palverify_version = "1.0"' `
-    "launcher must bundle PalVerify verifier version 1.0"
+Require-Text $launcherSource 'palverify_version = "1.0.11"' `
+    "launcher must bundle PalVerify verifier version 1.0.11"
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.2"' `
-    "stable manifest must trigger the internal v1.0.2 launcher update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.2"' `
-    "stable manifest must require the client UI launcher revision"
+Require-Text $releaseManifest '"launcherVersion": "1.0.20"' `
+    "stable manifest must trigger the single-owner lifecycle update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.20"' `
+    "stable manifest must require the single-owner lifecycle revision"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
 Require-Text $launcherSource `
-    'Launcher và Palworld sẽ tự đóng để cài bản mới.' `
-    "launcher must explain that the current game and launcher will close"
+    'Launcher sẽ tự đóng để cài bản mới.' `
+    "launcher must explain that only the launcher closes for its update"
 Require-Text $nsis '!insertmacro MUI_PAGE_COMPONENTS' `
     "installer must expose installation options"
 Require-Text $nsis 'Section "Desktop shortcut" DesktopShortcutSection' `
@@ -273,39 +308,84 @@ Require-NoText $nsis 'Section /o "Desktop shortcut"' `
 Require-Text $nsis '$DESKTOP\Palworld 3 Mien.lnk' `
     "installer must create and remove the Desktop shortcut"
 foreach ($processName in @(
-    "Pal3Mien.exe",
-    "Palworld.exe",
-    "Palworld-Win64-Shipping.exe",
-    "PalVerifyClient.exe"
+    "Pal3Mien.exe"
 )) {
     Require-Text $nsis $processName `
         "update mode must close $processName before replacing files"
 }
+Require-NoText $nsis '/IM PalVerifyClient.exe' `
+    "launcher updates must preserve the active heartbeat process"
+Require-NoText $nsis '/IM Palworld.exe' `
+    "launcher updates must not force-close the running game"
+Require-NoText $nsis '/IM Palworld-Win64-Shipping.exe' `
+    "launcher updates must not force-close the running game executable"
 Require-Text $launcherStateSource 'steam://rungameid/1623730' `
     "launcher must open Palworld normally through Steam"
 Require-NoText $launcherSource 'steam://run/1623730' `
     "launcher must not auto-join a server through Steam"
 Require-NoText $launcherSource 'launch_steam_with_auto_join' `
     "launcher must not retain the auto-join launch path"
-Require-Text $packageInfo '"Version": "1.0"' `
-    "PalVerify package metadata must expose verifier version 1.0"
-Require-Text $clientAgentSource 'CLIENT_STARTED protocol=3 version=1.0' `
-    "client runtime log must expose verifier version 1.0"
+Require-Text $packageInfo '"Version": "1.0.11"' `
+    "PalVerify package metadata must expose verifier version 1.0.11"
+Require-Text $clientAgentSource 'CLIENT_STARTED protocol=3 version=1.0.11' `
+    "client runtime log must expose verifier version 1.0.11"
+Require-NoText $clientProbe 'PalVerifyClient.exe' `
+    "client Lua must not launch duplicate PalVerifyClient processes"
+Require-NoText $clientProbe 'os.execute' `
+    "client Lua must not create flashing command windows"
+Require-Text $launcherSource 'timer_client_watchdog' `
+    "launcher must own silent client supervision while the game is running"
+Require-Text $launcherSource 'CREATE_NO_WINDOW' `
+    "launcher client recovery must never create a console window"
+Require-Text $clientAgentSource 'CLIENT_STOPPED reason=game-exited' `
+    "client runtime must exit as soon as Palworld closes"
 Require-Text $serverAgentSource 'server agent started version=1.0' `
     "server runtime log must expose verifier version 1.0"
+Require-Text $serverConfig '"intervalSeconds": 1' `
+    "server verifier must poll every second for near-immediate pre-join enforcement"
+Require-Text $serverDisciplineSource 'temporaryIntegrityBanDuration = 24 * time.Hour' `
+    "first integrity offense must use a persistent 24-hour ban"
+Require-Text $serverDisciplineSource '"/v1/pdapi/ban/"' `
+    "integrity enforcement must use the PalDefender ban endpoint"
+Require-Text $serverDisciplineSource '"/v1/pdapi/unban/"' `
+    "temporary integrity bans must automatically expire through PalDefender"
+Require-Text $serverDisciplineSource '"IP":     false' `
+    "integrity enforcement must not apply an IP ban"
+Require-Text $serverAgentSource 'PALVERIFY_DISCORD_WEBHOOK_URL' `
+    "server agent must support a secret runtime Discord webhook"
+Require-Text $coordinatorSource 'PALVERIFY_DISCORD_WEBHOOK_URL' `
+    "coordinator must support a secret runtime Discord webhook"
+Require-Text $coordinatorAuditSource '"allowed_mentions"' `
+    "Discord audit payload must disable mentions"
+Require-NoText $serverConfig 'discord.com/api/webhooks/' `
+    "server config example must not contain a real Discord webhook"
 Require-Text $coordinatorSource 'RunManifestSync' `
-    "coordinator must continuously synchronize the trusted GitHub manifest"
+    "coordinator must continuously synchronize the trusted website manifest"
 Require-Text $manifestSyncSource `
-    'https://raw.githubusercontent.com/RinNiko/PalVerify/main/' `
-    "coordinator sync must pin the PalVerify GitHub manifest"
+    'https://ae3mien.net/api/palverify/v1/launcher/manifest' `
+    "coordinator sync must pin the website HTTPS manifest endpoint"
 Require-NoText $clientConfig '"token"' `
     "client package must not contain a shared bearer token"
 Require-Text $clientConfig '"coordinator"' `
     "client package must use the public coordinator base URL"
+Require-Text $clientAgentSource '"/v1/client/preflight"' `
+    "client must validate package and integrity policy before launch"
+Require-Text $clientAgentSource 'L"--preflight"' `
+    "client must expose launcher preflight mode"
+Require-Text $clientAgentSource 'show_runtime_integrity_alert' `
+    "runtime integrity violations must be visible on the client machine"
+Require-Text $launcherSource 'run_client_preflight' `
+    "launcher must execute client preflight before enabling Start"
+Require-Text $launcherSource 'quarantine_unapproved_mods' `
+    "launcher must quarantine and retry exact NOT_WHITELISTED failures"
+Require-Text $launcherSource 'preflight_succeeded' `
+    "launcher Ready state must remain locked until preflight succeeds"
 Require-Text $clientAgentSource 'CLIENT_WAITING_FOR_GAME' `
     "client agent must wait for Palworld to start"
-Require-Text $clientAgentSource 'write_event(log, "INTEGRITY_VIOLATION")' `
-    "client log must use a generic integrity event"
+Require-NoText $clientAgentSource 'CLIENT_WAITING_FOR_GAME_RESTART' `
+    "client agent must not remain alive after Palworld exits"
+Require-Text $clientAgentSource '"INTEGRITY_VIOLATION rules="' `
+    "client log must expose only compact integrity rule codes"
 Require-Text $clientAgentSource 'scan_palworld_modules' `
     "client agent must scan loaded Palworld modules for injection"
 Require-NoText $clientAgentSource 'write_event(log, violations.back())' `
@@ -343,6 +423,14 @@ if ($null -ne $packageInfo) {
 }
 if ($null -ne $releaseManifest) {
     $releaseMetadata = $releaseManifest | ConvertFrom-Json
+    if (
+        $releaseMetadata.websiteUrl -cne "https://ae3mien.net/" -or
+        $releaseMetadata.newsUrl -cne "https://ae3mien.net/"
+    ) {
+        $failures.Add(
+            "launcher website and news buttons must use https://ae3mien.net/"
+        )
+    }
     if (
         $releaseMetadata.palVerifyPackageDigest -notmatch
             '^[0-9a-f]{64}$'

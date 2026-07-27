@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <iterator>
 #include <optional>
 #include <sstream>
@@ -173,13 +174,20 @@ struct HttpResponse {
     std::string body;
 };
 
+thread_local DWORD last_post_error = ERROR_SUCCESS;
+thread_local std::string_view last_post_stage = "none";
+
 [[nodiscard]] auto post_json(
     std::string_view endpoint_value,
     std::string_view json
 ) -> std::optional<HttpResponse>
 {
+    last_post_error = ERROR_SUCCESS;
+    last_post_stage = "start";
     const auto endpoint = utf8_to_wide(endpoint_value);
     if (!endpoint.has_value()) {
+        last_post_error = ERROR_INVALID_PARAMETER;
+        last_post_stage = "url-encoding";
         return std::nullopt;
     }
 
@@ -195,6 +203,8 @@ struct HttpResponse {
             &parts
         )
         == FALSE) {
+        last_post_error = GetLastError();
+        last_post_stage = "url-parse";
         return std::nullopt;
     }
 
@@ -215,12 +225,16 @@ struct HttpResponse {
         0
     );
     if (session == nullptr) {
+        last_post_error = GetLastError();
+        last_post_stage = "session";
         return std::nullopt;
     }
-    WinHttpSetTimeouts(session, 5000, 5000, 5000, 5000);
+    WinHttpSetTimeouts(session, 8000, 8000, 12000, 12000);
     const auto connection =
         WinHttpConnect(session, host.c_str(), parts.nPort, 0);
     if (connection == nullptr) {
+        last_post_error = GetLastError();
+        last_post_stage = "connect";
         WinHttpCloseHandle(session);
         return std::nullopt;
     }
@@ -234,6 +248,8 @@ struct HttpResponse {
         parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0
     );
     if (request == nullptr) {
+        last_post_error = GetLastError();
+        last_post_stage = "request";
         WinHttpCloseHandle(connection);
         WinHttpCloseHandle(session);
         return std::nullopt;
@@ -250,24 +266,37 @@ struct HttpResponse {
         static_cast<DWORD>(json.size()),
         0
     );
-    const auto received =
-        sent != FALSE ? WinHttpReceiveResponse(request, nullptr) : FALSE;
+    if (sent == FALSE) {
+        last_post_error = GetLastError();
+        last_post_stage = "send";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return std::nullopt;
+    }
+    const auto received = WinHttpReceiveResponse(request, nullptr);
+    if (received == FALSE) {
+        last_post_error = GetLastError();
+        last_post_stage = "receive";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return std::nullopt;
+    }
     DWORD status = 0;
     DWORD status_size = sizeof(status);
-    const auto queried =
-        received != FALSE
-        && WinHttpQueryHeaders(
-               request,
-               WINHTTP_QUERY_STATUS_CODE
-                   | WINHTTP_QUERY_FLAG_NUMBER,
-               WINHTTP_HEADER_NAME_BY_INDEX,
-               &status,
-               &status_size,
-               WINHTTP_NO_HEADER_INDEX
-           )
-            != FALSE;
+    const auto queried = WinHttpQueryHeaders(
+        request,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX,
+        &status,
+        &status_size,
+        WINHTTP_NO_HEADER_INDEX
+    );
 
     if (!queried) {
+        last_post_error = GetLastError();
+        last_post_stage = "status";
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connection);
         WinHttpCloseHandle(session);
@@ -278,6 +307,8 @@ struct HttpResponse {
     for (;;) {
         DWORD available = 0;
         if (WinHttpQueryDataAvailable(request, &available) == FALSE) {
+            last_post_error = GetLastError();
+            last_post_stage = "body-size";
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             WinHttpCloseHandle(session);
@@ -287,6 +318,8 @@ struct HttpResponse {
             break;
         }
         if (body.size() + available > 16 * 1024) {
+            last_post_error = ERROR_INSUFFICIENT_BUFFER;
+            last_post_stage = "body-limit";
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             WinHttpCloseHandle(session);
@@ -302,6 +335,8 @@ struct HttpResponse {
                 &read
             )
             == FALSE) {
+            last_post_error = GetLastError();
+            last_post_stage = "body-read";
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             WinHttpCloseHandle(session);
@@ -314,6 +349,32 @@ struct HttpResponse {
     WinHttpCloseHandle(connection);
     WinHttpCloseHandle(session);
     return HttpResponse{.status = status, .body = std::move(body)};
+}
+
+[[nodiscard]] auto post_json_with_retry(
+    std::string_view endpoint,
+    std::string_view json
+) -> std::optional<HttpResponse>
+{
+    constexpr unsigned int maximum_attempts = 2;
+    for (unsigned int attempt = 1; attempt <= maximum_attempts; ++attempt) {
+        auto response = post_json(endpoint, json);
+        const auto status = response.has_value()
+            ? std::optional<unsigned long>{response->status}
+            : std::nullopt;
+        if (!palverify::should_retry_client_http(
+                status,
+                last_post_error,
+                attempt,
+                maximum_attempts
+            )) {
+            return response;
+        }
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds{400 * attempt}
+        );
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] auto log_path() -> std::filesystem::path
@@ -463,20 +524,219 @@ void start_client_ui_worker(
     ).detach();
 }
 
+[[nodiscard]] auto join_codes(
+    const std::vector<std::string>& values
+) -> std::string
+{
+    std::string joined;
+    for (const auto& value : values) {
+        if (!joined.empty()) {
+            joined.push_back(',');
+        }
+        joined += value;
+    }
+    return joined;
+}
+
+void append_module_evidence(
+    const palverify::ModuleScanResult& scan,
+    std::vector<std::string>& violations,
+    std::vector<palverify::IntegrityEvidence>& evidence
+)
+{
+    for (const auto rule : scan.rules) {
+        violations.emplace_back(palverify::to_string(rule));
+    }
+    for (const auto& match : scan.matches) {
+        evidence.push_back({
+            .rule = std::string{palverify::to_string(match.rule)},
+            .source = match.image_name.empty() ? "memory" : "module",
+            .file_name = match.image_name,
+            .sha256 = match.sha256,
+            .signer_name = match.signer_name,
+            .file_description = match.file_description,
+            .company_name = match.company_name,
+            .match_reason = match.match_reason,
+            .signature_valid = match.signature_valid,
+        });
+    }
+}
+
+void show_runtime_integrity_alert(
+    const std::vector<std::string>& violations,
+    const std::vector<palverify::IntegrityEvidence>& evidence
+)
+{
+    const auto message = utf8_to_wide(
+        palverify::format_runtime_integrity_message(violations, evidence)
+    );
+    if (!message.has_value()) {
+        return;
+    }
+    std::thread([message = *message] {
+        MessageBoxW(
+            nullptr,
+            message.c_str(),
+            L"PalVerify - Không thể xác minh",
+            MB_OK | MB_ICONERROR | MB_TOPMOST
+        );
+    }).detach();
+}
+
+[[nodiscard]] auto finish_preflight(
+    std::ofstream& log,
+    palverify::ClientPreflightExit exit_code,
+    std::string_view reason,
+    std::string_view detail = {}
+) -> int
+{
+    std::string event =
+        exit_code == palverify::ClientPreflightExit::accepted
+        ? "PREFLIGHT_ACCEPTED"
+        : "PREFLIGHT_REJECTED";
+    event += " reason=";
+    event += reason;
+    if (!detail.empty()) {
+        event += " detail=";
+        event += detail;
+    }
+    write_event(log, event);
+    std::cout << event << '\n';
+    return static_cast<int>(exit_code);
+}
+
+[[nodiscard]] auto run_preflight(
+    std::ofstream& log,
+    const palverify::ClientConfig& config,
+    const std::filesystem::path& game_root
+) -> int
+{
+    if (!active_steam_user_id().has_value()) {
+        return finish_preflight(
+            log,
+            palverify::ClientPreflightExit::steam_user_unavailable,
+            "STEAM_USER_UNAVAILABLE"
+        );
+    }
+
+    const auto process_scan = palverify::scan_running_processes();
+    if (!process_scan.available) {
+        return finish_preflight(
+            log,
+            palverify::ClientPreflightExit::scan_unavailable,
+            "PROCESS_SCAN_UNAVAILABLE"
+        );
+    }
+    std::vector<std::string> violations;
+    std::vector<palverify::IntegrityEvidence> violation_evidence;
+    for (const auto rule : process_scan.rules) {
+        violations.emplace_back(palverify::to_string(rule));
+    }
+
+    if (palworld_is_running()) {
+        const auto module_scan = palverify::scan_palworld_modules(game_root);
+        if (!module_scan.available) {
+            return finish_preflight(
+                log,
+                palverify::ClientPreflightExit::scan_unavailable,
+                "MODULE_SCAN_UNAVAILABLE"
+            );
+        }
+        append_module_evidence(
+            module_scan,
+            violations,
+            violation_evidence
+        );
+    }
+
+    std::vector<palverify::ReportedMod> inventory;
+    try {
+        inventory = palverify::scan_mod_inventory(game_root);
+    } catch (const std::exception&) {
+        return finish_preflight(
+            log,
+            palverify::ClientPreflightExit::scan_unavailable,
+            "MOD_SCAN_UNAVAILABLE"
+        );
+    }
+    const auto response = post_json_with_retry(
+        config.coordinator + "/v1/client/preflight",
+        palverify::build_client_preflight_json({
+            .server_id = config.server_id,
+            .protocol_version = "3",
+            .mods = std::move(inventory),
+            .violations = std::move(violations),
+            .violation_evidence = std::move(violation_evidence),
+        })
+    );
+    if (!response.has_value()) {
+        return finish_preflight(
+            log,
+            palverify::ClientPreflightExit::transport_failed,
+            "COORDINATOR_UNREACHABLE",
+            std::string{last_post_stage}
+                + "-WINHTTP_" + std::to_string(last_post_error)
+        );
+    }
+    if (response->status != 200) {
+        return finish_preflight(
+            log,
+            palverify::ClientPreflightExit::http_rejected,
+            "COORDINATOR_HTTP_ERROR",
+            "HTTP_" + std::to_string(response->status)
+        );
+    }
+    const auto result =
+        palverify::parse_client_preflight_response(response->body);
+    if (!result.has_value()) {
+        return finish_preflight(
+            log,
+            palverify::ClientPreflightExit::invalid_response,
+            "COORDINATOR_RESPONSE_INVALID"
+        );
+    }
+    if (result->accepted) {
+        return finish_preflight(
+            log,
+            palverify::ClientPreflightExit::accepted,
+            result->reason
+        );
+    }
+    auto exit_code = palverify::ClientPreflightExit::rejected;
+    if (result->reason == "INTEGRITY_VIOLATION") {
+        exit_code = palverify::ClientPreflightExit::integrity_violation;
+    } else if (result->reason == "UNAPPROVED_MOD") {
+        exit_code = palverify::ClientPreflightExit::unapproved_mod;
+    }
+    return finish_preflight(
+        log,
+        exit_code,
+        result->reason,
+        result->detail
+    );
+}
+
 }  // namespace
 
-auto wmain() -> int
+auto wmain(int argc, wchar_t** argv) -> int
 {
-    const auto instance =
-        CreateMutexW(nullptr, FALSE, L"Local\\PalVerifyClient");
-    if (instance == nullptr) {
-        return 2;
-    }
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        CloseHandle(instance);
-        return 0;
+    const auto preflight =
+        argc == 2 && _wcsicmp(argv[1], L"--preflight") == 0;
+    if (argc != 1 && !preflight) {
+        return 10;
     }
 
+    HANDLE instance = nullptr;
+    if (!preflight) {
+        instance = CreateMutexW(nullptr, FALSE, L"Local\\PalVerifyClient");
+        if (instance == nullptr) {
+            return 2;
+        }
+        if (GetLastError() == ERROR_ALREADY_EXISTS) {
+            CloseHandle(instance);
+            return 0;
+        }
+    }
     const auto path = log_path();
     std::error_code directory_error;
     std::filesystem::create_directories(
@@ -485,23 +745,47 @@ auto wmain() -> int
     );
     std::ofstream log{path, std::ios::app};
     if (!log) {
-        CloseHandle(instance);
+        if (instance != nullptr) {
+            CloseHandle(instance);
+        }
         return 3;
     }
 
     const auto config = read_client_config();
     const auto game_root = find_game_root();
-    const auto user_id = active_steam_user_id();
     if (!config.has_value()) {
         write_event(log, "CLIENT_START_FAILED reason=invalid-config");
-        CloseHandle(instance);
+        if (instance != nullptr) {
+            CloseHandle(instance);
+        }
+        if (preflight) {
+            return finish_preflight(
+                log,
+                palverify::ClientPreflightExit::invalid_config,
+                "INVALID_CONFIG"
+            );
+        }
         return 4;
     }
     if (!game_root.has_value()) {
         write_event(log, "CLIENT_START_FAILED reason=game-root-unavailable");
-        CloseHandle(instance);
+        if (instance != nullptr) {
+            CloseHandle(instance);
+        }
+        if (preflight) {
+            return finish_preflight(
+                log,
+                palverify::ClientPreflightExit::game_root_unavailable,
+                "GAME_ROOT_UNAVAILABLE"
+            );
+        }
         return 5;
     }
+    if (preflight) {
+        return run_preflight(log, *config, *game_root);
+    }
+
+    const auto user_id = active_steam_user_id();
     if (!user_id.has_value()) {
         write_event(log, "CLIENT_START_FAILED reason=steam-user-unavailable");
         CloseHandle(instance);
@@ -523,7 +807,7 @@ auto wmain() -> int
         }
     }
 
-    write_event(log, "CLIENT_STARTED protocol=3 version=1.0");
+    write_event(log, "CLIENT_STARTED protocol=3 version=1.0.11");
     start_client_ui_worker(
         module_directory() / "ui-queue",
         config->website
@@ -543,9 +827,16 @@ auto wmain() -> int
     std::uint64_t sequence = 0;
     auto next_inventory_refresh = std::chrono::steady_clock::now()
         + std::chrono::minutes{1};
-    while (palworld_is_running()) {
+    bool integrity_alert_shown = false;
+    while (true) {
+        if (!palworld_is_running()) {
+            write_event(log, "CLIENT_STOPPED reason=game-exited");
+            break;
+        }
+
         const auto scan = palverify::scan_running_processes();
         std::vector<std::string> violations;
+        std::vector<palverify::IntegrityEvidence> violation_evidence;
         if (!scan.available) {
             write_event(log, "PROCESS_SCAN_UNAVAILABLE");
         } else {
@@ -558,12 +849,24 @@ auto wmain() -> int
         if (!module_scan.available) {
             write_event(log, "MODULE_SCAN_UNAVAILABLE");
         } else {
-            for (const auto rule : module_scan.rules) {
-                violations.emplace_back(palverify::to_string(rule));
-            }
+            append_module_evidence(
+                module_scan,
+                violations,
+                violation_evidence
+            );
         }
         if (!violations.empty()) {
-            write_event(log, "INTEGRITY_VIOLATION");
+            write_event(
+                log,
+                "INTEGRITY_VIOLATION rules=" + join_codes(violations)
+            );
+            if (!integrity_alert_shown) {
+                integrity_alert_shown = true;
+                show_runtime_integrity_alert(
+                    violations,
+                    violation_evidence
+                );
+            }
         }
 
         const auto now = std::chrono::steady_clock::now();
@@ -579,7 +882,7 @@ auto wmain() -> int
             sequence,
             static_cast<std::uint64_t>(wall_clock_milliseconds)
         );
-        const auto challenge_response = post_json(
+        const auto challenge_response = post_json_with_retry(
             config->coordinator + "/v1/client/challenge",
             palverify::build_challenge_request_json(
                 config->server_id,
@@ -617,8 +920,9 @@ auto wmain() -> int
             .sent_at = utc_timestamp(),
             .mods = inventory,
             .violations = std::move(violations),
+            .violation_evidence = std::move(violation_evidence),
         });
-        const auto response = post_json(
+        const auto response = post_json_with_retry(
             config->coordinator + "/v1/client/report",
             report
         );
@@ -638,7 +942,7 @@ auto wmain() -> int
         }
         std::this_thread::sleep_for(std::chrono::seconds{5});
     }
-    write_event(log, "CLIENT_STOPPED reason=game-exited");
+    write_event(log, "CLIENT_STOPPED reason=game-restart-timeout");
     CloseHandle(instance);
     return 0;
 }

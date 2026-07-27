@@ -4,5 +4,8 @@
   "serverId": "bnb",
   "restUrl": "http://127.0.0.1:17993",
   "restToken": "replace-with-paldefender-token",
-  "intervalSeconds": 5
+  "intervalSeconds": 1,
+  "discordWebhookUrl": "",
+  "disciplineStatePath": "",
+  "palDefenderLogDirectory": ""
 }

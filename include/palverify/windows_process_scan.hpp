@@ -36,9 +36,21 @@ struct ModuleEvidence {
     std::string_view company_name;
 };
 
+struct ModuleRuleMatch {
+    ProcessRuleId rule;
+    std::string image_name;
+    std::string sha256;
+    std::string signer_name;
+    std::string file_description;
+    std::string company_name;
+    std::string match_reason;
+    bool signature_valid;
+};
+
 struct ModuleScanResult {
     bool available;
     std::vector<ProcessRuleId> rules;
+    std::vector<ModuleRuleMatch> matches;
 };
 
 [[nodiscard]] auto inspect_process_executable(
@@ -50,6 +62,10 @@ struct ModuleScanResult {
 [[nodiscard]] auto detect_module_rules(
     std::span<const ModuleEvidence> modules
 ) -> std::vector<ProcessRuleId>;
+
+[[nodiscard]] auto detect_module_matches(
+    std::span<const ModuleEvidence> modules
+) -> std::vector<ModuleRuleMatch>;
 
 [[nodiscard]] auto looks_like_manual_map_candidate(
     std::span<const std::byte> header

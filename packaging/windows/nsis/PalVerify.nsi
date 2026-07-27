@@ -157,10 +157,6 @@ Function .onInit
     StrCmp $R1 "1" 0 restore_desktop_preference
     StrCpy $UpdateMode "1"
     nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM Pal3Mien.exe'
-    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM Palworld.exe'
-    nsExec::ExecToLog \
-        '"$SYSDIR\taskkill.exe" /F /IM Palworld-Win64-Shipping.exe'
-    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM PalVerifyClient.exe'
     Sleep 500
 
 restore_desktop_preference:

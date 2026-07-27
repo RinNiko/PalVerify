@@ -8,6 +8,7 @@
 #include <array>
 #include <cctype>
 #include <cstddef>
+#include <cwctype>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
@@ -15,6 +16,7 @@
 #include <optional>
 #include <ranges>
 #include <regex>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -225,6 +227,36 @@ private:
     return match[1].str();
 }
 
+[[nodiscard]] auto json_bool_field(
+    std::string_view json,
+    std::string_view field
+) -> std::optional<bool>
+{
+    const std::regex pattern{
+        "\"" + std::string{field} + R"regex("\s*:\s*(true|false))regex",
+        std::regex::ECMAScript,
+    };
+    std::match_results<std::string_view::const_iterator> match;
+    if (!std::regex_search(json.begin(), json.end(), match, pattern)) {
+        return std::nullopt;
+    }
+    return match[1].str() == "true";
+}
+
+[[nodiscard]] auto safe_policy_code(
+    std::string_view value,
+    std::size_t maximum
+) -> bool
+{
+    return !value.empty() && value.size() <= maximum
+        && std::ranges::all_of(value, [](const char character) {
+               const auto byte = static_cast<unsigned char>(character);
+               return std::isalnum(byte) != 0 || character == '.'
+                   || character == '_' || character == '-'
+                   || character == ':' || character == ',';
+           });
+}
+
 [[nodiscard]] auto compact_id(std::string_view value) -> std::string
 {
     std::string compact;
@@ -245,12 +277,99 @@ private:
     return compact.empty() ? "unknown-mod" : compact;
 }
 
-void scan_workshop(
-    const std::filesystem::path& game_root,
+[[nodiscard]] auto trim_ascii(std::string_view value) -> std::string_view
+{
+    while (!value.empty()
+           && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+        value.remove_prefix(1);
+    }
+    while (!value.empty()
+           && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+        value.remove_suffix(1);
+    }
+    return value;
+}
+
+[[nodiscard]] auto configured_workshop_root(
+    const std::filesystem::path& game_root
+) -> std::optional<std::filesystem::path>
+{
+    const auto settings =
+        read_text(game_root / "Mods" / "PalModSettings.ini");
+    std::istringstream lines{settings};
+    bool mods_enabled = false;
+    std::string workshop_root;
+    for (std::string line; std::getline(lines, line);) {
+        const auto cleaned = trim_ascii(line);
+        if (cleaned.empty() || cleaned.front() == ';'
+            || cleaned.front() == '#' || cleaned.front() == '[') {
+            continue;
+        }
+        const auto equals = cleaned.find('=');
+        if (equals == std::string_view::npos) {
+            continue;
+        }
+        const auto key = trim_ascii(cleaned.substr(0, equals));
+        const auto value = trim_ascii(cleaned.substr(equals + 1));
+        if (key == "bGlobalEnableMod") {
+            mods_enabled =
+                value == "True" || value == "true" || value == "1";
+        } else if (key == "WorkshopRootDir") {
+            workshop_root = value;
+        }
+    }
+    if (!mods_enabled || workshop_root.empty()) {
+        return std::nullopt;
+    }
+
+    auto root = std::filesystem::path{workshop_root}.lexically_normal();
+    if (!root.is_absolute() || root == root.root_path()) {
+        throw std::runtime_error{"unsafe WorkshopRootDir"};
+    }
+    return root;
+}
+
+void scan_enabled_ue4ss_mods(
+    const std::filesystem::path& package_root,
     std::vector<ReportedMod>& inventory
 )
 {
-    const auto root = game_root / "Mods" / "Workshop";
+    const auto mods_root = package_root / "Mods";
+    std::error_code error;
+    for (std::filesystem::directory_iterator iterator{
+             mods_root,
+             std::filesystem::directory_options::skip_permission_denied,
+             error,
+         },
+         end;
+         iterator != end;
+         iterator.increment(error)) {
+        if (error) {
+            error.clear();
+            continue;
+        }
+        if (!iterator->is_directory(error) || error) {
+            error.clear();
+            continue;
+        }
+        const auto enabled = iterator->path() / "enabled.txt";
+        if (!std::filesystem::is_regular_file(enabled, error) || error) {
+            error.clear();
+            continue;
+        }
+        inventory.push_back({
+            .id = compact_id(iterator->path().filename().string()),
+            .version = "ue4ss",
+            .digest = package_digest(iterator->path()),
+        });
+    }
+}
+
+void scan_workshop_root(
+    const std::filesystem::path& root,
+    std::vector<ReportedMod>& inventory
+)
+{
     std::error_code error;
     for (std::filesystem::directory_iterator iterator{
              root,
@@ -283,6 +402,57 @@ void scan_workshop(
             .version = compact_id(json_field(info, "Version")),
             .digest = package_digest(iterator->path()),
         });
+        scan_enabled_ue4ss_mods(iterator->path(), inventory);
+    }
+}
+
+void scan_workshop(
+    const std::filesystem::path& game_root,
+    std::vector<ReportedMod>& inventory
+)
+{
+    const auto local_root = game_root / "Mods" / "Workshop";
+    scan_workshop_root(local_root, inventory);
+    const auto external_root = configured_workshop_root(game_root);
+    if (external_root.has_value()) {
+        std::error_code local_error;
+        std::error_code external_error;
+        auto normalized_local =
+            std::filesystem::weakly_canonical(local_root, local_error);
+        auto normalized_external =
+            std::filesystem::weakly_canonical(*external_root, external_error);
+        if (local_error) {
+            normalized_local = std::filesystem::absolute(
+                local_root,
+                local_error
+            ).lexically_normal();
+        }
+        if (external_error) {
+            normalized_external = std::filesystem::absolute(
+                *external_root,
+                external_error
+            ).lexically_normal();
+        }
+        auto local_text = normalized_local.wstring();
+        auto external_text = normalized_external.wstring();
+        std::ranges::transform(
+            local_text,
+            local_text.begin(),
+            [](wchar_t character) {
+                return static_cast<wchar_t>(std::towlower(character));
+            }
+        );
+        std::ranges::transform(
+            external_text,
+            external_text.begin(),
+            [](wchar_t character) {
+                return static_cast<wchar_t>(std::towlower(character));
+            }
+        );
+        if (local_text == external_text) {
+            return;
+        }
+        scan_workshop_root(*external_root, inventory);
     }
 }
 
@@ -457,6 +627,31 @@ auto next_report_sequence(
     return wall_clock_milliseconds;
 }
 
+auto should_retry_client_http(
+    std::optional<unsigned long> status,
+    unsigned long win32_error,
+    unsigned int attempt,
+    unsigned int maximum_attempts
+) -> bool
+{
+    if (attempt >= maximum_attempts) {
+        return false;
+    }
+    if (status.has_value()) {
+        return *status == 408 || *status == 429 || *status >= 500;
+    }
+    constexpr std::array<unsigned long, 6> transient_errors{
+        12002,
+        12007,
+        12029,
+        12030,
+        12031,
+        12152,
+    };
+    return std::ranges::find(transient_errors, win32_error)
+        != transient_errors.end();
+}
+
 auto scan_mod_inventory(const std::filesystem::path& game_root)
     -> std::vector<ReportedMod>
 {
@@ -477,6 +672,40 @@ auto scan_mod_inventory(const std::filesystem::path& game_root)
             < std::tie(right.id, right.version, right.digest);
     });
     return inventory;
+}
+
+void append_integrity_evidence_json(
+    std::string& output,
+    std::span<const IntegrityEvidence> evidence
+)
+{
+    output += ",\"violationEvidence\":[";
+    for (std::size_t index = 0; index < evidence.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const auto& item = evidence[index];
+        output += "{\"rule\":";
+        append_json_string(output, item.rule);
+        output += ",\"source\":";
+        append_json_string(output, item.source);
+        output += ",\"fileName\":";
+        append_json_string(output, item.file_name);
+        output += ",\"sha256\":";
+        append_json_string(output, item.sha256);
+        output += ",\"signerName\":";
+        append_json_string(output, item.signer_name);
+        output += ",\"fileDescription\":";
+        append_json_string(output, item.file_description);
+        output += ",\"companyName\":";
+        append_json_string(output, item.company_name);
+        output += ",\"matchReason\":";
+        append_json_string(output, item.match_reason);
+        output += ",\"signatureValid\":";
+        output += item.signature_valid ? "true" : "false";
+        output.push_back('}');
+    }
+    output.push_back(']');
 }
 
 auto build_client_report_json(const ClientReport& report) -> std::string
@@ -512,8 +741,144 @@ auto build_client_report_json(const ClientReport& report) -> std::string
         }
         append_json_string(output, report.violations[index]);
     }
-    output += "]}";
+    output.push_back(']');
+    append_integrity_evidence_json(output, report.violation_evidence);
+    output.push_back('}');
     return output;
+}
+
+auto format_runtime_integrity_message(
+    std::span<const std::string> violations,
+    std::span<const IntegrityEvidence> evidence
+) -> std::string
+{
+    auto compact_display_text = [](std::string_view value) {
+        std::string compact;
+        compact.reserve(std::min<std::size_t>(value.size(), 160));
+        bool previous_space = false;
+        for (const auto character : value) {
+            const auto byte = static_cast<unsigned char>(character);
+            if (byte < 0x20 || byte == 0x7f) {
+                if (!compact.empty() && !previous_space) {
+                    compact.push_back(' ');
+                    previous_space = true;
+                }
+                continue;
+            }
+            if (compact.size() >= 160) {
+                break;
+            }
+            compact.push_back(character);
+            previous_space = character == ' ';
+        }
+        while (!compact.empty() && compact.back() == ' ') {
+            compact.pop_back();
+        }
+        return compact;
+    };
+    auto safe_file_name = [&](std::string_view value) {
+        const auto separator = value.find_last_of("\\/:");
+        if (separator != std::string_view::npos) {
+            value.remove_prefix(separator + 1);
+        }
+        return compact_display_text(value);
+    };
+
+    std::string message{
+        "PalVerify phát hiện phần mềm hoặc module can thiệp:\r\n\r\n"
+    };
+    for (std::size_t index = 0; index < violations.size(); ++index) {
+        if (index != 0) {
+            message += "\r\n";
+        }
+        message += compact_display_text(violations[index]);
+    }
+    for (const auto& item : evidence) {
+        message += "\r\n\r\n";
+        const auto file_name = safe_file_name(item.file_name);
+        if (!file_name.empty()) {
+            message += "Tệp/DLL nghi vấn: " + file_name + "\r\n";
+        }
+        const auto description =
+            compact_display_text(item.file_description);
+        if (!description.empty()) {
+            message += "Phần mềm: " + description + "\r\n";
+        }
+        const auto company = compact_display_text(item.company_name);
+        if (!company.empty()) {
+            message += "Hãng phát hành: " + company + "\r\n";
+        }
+        const auto signer = compact_display_text(item.signer_name);
+        if (!signer.empty() && signer != company) {
+            message += "Chữ ký số: " + signer + "\r\n";
+        }
+        const auto match_reason = compact_display_text(item.match_reason);
+        if (!match_reason.empty()) {
+            message += "Mã nhận diện: " + match_reason;
+        } else if (message.ends_with("\r\n")) {
+            message.resize(message.size() - 2);
+        }
+    }
+    message +=
+        "\r\n\r\nHãy tắt phần mềm liên quan, thoát hẳn Palworld "
+        "rồi mở lại bằng launcher.";
+    return message;
+}
+
+auto build_client_preflight_json(const ClientPreflight& preflight)
+    -> std::string
+{
+    std::string output{"{\"serverId\":"};
+    append_json_string(output, preflight.server_id);
+    output += ",\"protocolVersion\":";
+    append_json_string(output, preflight.protocol_version);
+    output += ",\"mods\":[";
+    for (std::size_t index = 0; index < preflight.mods.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += "{\"id\":";
+        append_json_string(output, preflight.mods[index].id);
+        output += ",\"version\":";
+        append_json_string(output, preflight.mods[index].version);
+        output += ",\"digest\":";
+        append_json_string(output, preflight.mods[index].digest);
+        output.push_back('}');
+    }
+    output += "],\"violations\":[";
+    for (std::size_t index = 0; index < preflight.violations.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        append_json_string(output, preflight.violations[index]);
+    }
+    output.push_back(']');
+    append_integrity_evidence_json(output, preflight.violation_evidence);
+    output.push_back('}');
+    return output;
+}
+
+auto parse_client_preflight_response(std::string_view json)
+    -> std::optional<ClientPreflightResponse>
+{
+    const auto accepted = json_bool_field(json, "accepted");
+    ClientPreflightResponse response{
+        .accepted = accepted.value_or(false),
+        .reason = json_field(json, "reason"),
+        .detail = json_field(json, "detail"),
+    };
+    if (!accepted.has_value() || !safe_policy_code(response.reason, 64)
+        || (!response.detail.empty()
+            && !safe_policy_code(response.detail, 1024))) {
+        return std::nullopt;
+    }
+    if (response.accepted && response.reason != "VERIFIED") {
+        return std::nullopt;
+    }
+    if (!response.accepted && response.detail.empty()) {
+        return std::nullopt;
+    }
+    return response;
 }
 
 auto build_challenge_request_json(

@@ -109,6 +109,47 @@ func TestEvaluateKicksUnknownModAndLogsOnlyCompactDescriptors(t *testing.T) {
 	}
 }
 
+func TestApprovedDuplicatePackageCopiesAreAllowed(t *testing.T) {
+	const digestA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const digestB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const digestC = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	allowed := map[string]AllowedMod{
+		"UE4SSExperimentalPW": {
+			Version: "experimental-palworld-6",
+			Digest:  digestA,
+			CompatiblePackages: []AllowedPackage{{
+				Version: "experimental-palworld-6",
+				Digest:  digestB,
+			}},
+		},
+	}
+	approvedCopies := []ReportedMod{
+		{
+			ID:      "UE4SSExperimentalPW",
+			Version: "experimental-palworld-6",
+			Digest:  digestA,
+		},
+		{
+			ID:      "UE4SSExperimentalPW",
+			Version: "experimental-palworld-6",
+			Digest:  digestB,
+		},
+	}
+
+	rejected, detail := rejectedModIDs(approvedCopies, allowed)
+	if len(rejected) != 0 || detail != "" {
+		t.Fatalf("approved copies must pass, got mods=%#v detail=%q", rejected, detail)
+	}
+
+	approvedCopies[1].Digest = digestC
+	rejected, detail = rejectedModIDs(approvedCopies, allowed)
+	if len(rejected) != 1 ||
+		rejected[0] != "UE4SSExperimentalPW" ||
+		detail != "UE4SSExperimentalPW:DIGEST_MISMATCH" {
+		t.Fatalf("unknown copy must be rejected, got mods=%#v detail=%q", rejected, detail)
+	}
+}
+
 func TestEvaluateKicksDetectedCheatRule(t *testing.T) {
 	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
 	store := NewStore(Config{
@@ -131,7 +172,21 @@ func TestEvaluateKicksDetectedCheatRule(t *testing.T) {
 			Version: "0.3.0",
 			Digest:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		}},
-		Violations: []string{"CHEAT_ENGINE_RUNNING"},
+		Violations: []string{
+			"CHEAT_ENGINE_RUNNING",
+			"INJECTED_MODULE_DETECTED",
+		},
+		ViolationEvidence: []IntegrityEvidence{{
+			Rule:            "INJECTED_MODULE_DETECTED",
+			Source:          "module",
+			FileName:        "trainerlib_x64.dll",
+			SHA256:          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			SignerName:      "WeMod LLC",
+			FileDescription: "TrainerLib Plugin",
+			CompanyName:     "Wand Technologies",
+			MatchReason:     "WEMOD_MODULE_SIGNATURE",
+			SignatureValid:  true,
+		}},
 	}, now)
 	if err != nil {
 		t.Fatalf("accept report: %v", err)
@@ -144,6 +199,43 @@ func TestEvaluateKicksDetectedCheatRule(t *testing.T) {
 
 	if len(result) != 1 || result[0].Reason != "INTEGRITY_VIOLATION" {
 		t.Fatalf("expected integrity kick, got %#v", result)
+	}
+	if !strings.Contains(result[0].Detail, "file=trainerlib_x64.dll") ||
+		!strings.Contains(result[0].Detail, "sha256=bbbbbbbb") ||
+		!strings.Contains(result[0].Detail, "signer=WeMod LLC") ||
+		!strings.Contains(result[0].Detail, "description=TrainerLib Plugin") ||
+		!strings.Contains(result[0].Detail, "company=Wand Technologies") ||
+		!strings.Contains(result[0].Detail, "match=WEMOD_MODULE_SIGNATURE") {
+		t.Fatalf("missing safe module evidence: %q", result[0].Detail)
+	}
+	if strings.Contains(result[0].Detail, `C:\`) {
+		t.Fatalf("integrity detail leaked a full path: %q", result[0].Detail)
+	}
+}
+
+func TestAcceptReportRejectsModuleEvidenceWithPath(t *testing.T) {
+	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+	})
+	err := acceptReportForActivePlayer(t, store, Report{
+		UserID:   "steam_76561198317031083",
+		Sequence: 1,
+		SentAt:   now,
+		Violations: []string{
+			"INJECTED_MODULE_DETECTED",
+		},
+		ViolationEvidence: []IntegrityEvidence{{
+			Rule:        "INJECTED_MODULE_DETECTED",
+			Source:      "module",
+			FileName:    `C:\private\trainer.dll`,
+			SHA256:      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			MatchReason: "UNSIGNED_EXTERNAL_MODULE",
+		}},
+	}, now)
+	if err == nil || !strings.Contains(err.Error(), "evidence") {
+		t.Fatalf("expected unsafe evidence rejection, got %v", err)
 	}
 }
 
@@ -410,6 +502,42 @@ func TestHTTPHandlerUsesSessionChallengeAndProtectsServerCredential(t *testing.T
 	handler.ServeHTTP(wrongResponse, wrongCredential)
 	if wrongResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("public client reached server API: %d", wrongResponse.Code)
+	}
+}
+
+func TestHTTPHandlerAcceptsUnicodePlayerNamesForEvaluation(t *testing.T) {
+	now := time.Date(2026, 7, 27, 10, 30, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:     20 * time.Second,
+		ReportMaxAge:    45 * time.Second,
+		ChallengeMaxAge: 15 * time.Second,
+		AllowedMods:     map[string]AllowedMod{},
+	})
+	handler := NewHandler(
+		store,
+		"server-token",
+		func() time.Time { return now },
+		nil,
+	)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/server/evaluate",
+		strings.NewReader(`{
+			"serverId":"bnb",
+			"sentAt":"2026-07-27T10:30:00Z",
+			"players":[
+				{"userId":"steam_00000000000000001","name":"Đặng 7749"}
+			]
+		}`),
+	)
+	request.Header.Set("Authorization", "Bearer server-token")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("unicode player name rejected with HTTP %d", response.Code)
 	}
 }
 

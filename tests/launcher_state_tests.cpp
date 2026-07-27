@@ -184,6 +184,41 @@ void steam_manifest_parser_detects_pending_update()
         "fully downloaded Steam update is not pending"
     );
 
+    const auto completed_target = palverify::parse_steam_app_state(R"(
+        "AppState"
+        {
+            "StateFlags" "4"
+            "buildid" "24181527"
+            "BytesToDownload" "276502144"
+            "BytesDownloaded" "276502144"
+            "TargetBuildID" "24181527"
+        }
+    )");
+    require(
+        completed_target.has_value(),
+        "completed Steam target manifest parsed"
+    );
+    require(
+        !completed_target->update_pending,
+        "target matching the installed build is not pending"
+    );
+
+    const auto running = palverify::parse_steam_app_state(R"(
+        "AppState"
+        {
+            "StateFlags" "68"
+            "buildid" "24181527"
+            "BytesToDownload" "276502144"
+            "BytesDownloaded" "276502144"
+            "TargetBuildID" "24181527"
+        }
+    )");
+    require(running.has_value(), "running Steam manifest parsed");
+    require(
+        !running->update_pending,
+        "a fully installed running game is not pending"
+    );
+
     const auto pending = palverify::parse_steam_app_state(R"(
         "AppState"
         {
@@ -298,16 +333,51 @@ void launcher_stays_locked_when_payload_installation_fails()
     require(
         !palverify::launcher_can_start(
             palverify::LauncherStatus::Ready,
+            false,
             false
         ),
         "failed PalVerify installation must lock Start"
     );
     require(
+        !palverify::launcher_can_start(
+            palverify::LauncherStatus::Ready,
+            true,
+            false
+        ),
+        "installed payload without successful preflight must lock Start"
+    );
+    require(
         palverify::launcher_can_start(
+            palverify::LauncherStatus::Ready,
+            true,
+            true
+        ),
+        "installed payload with successful preflight allows Start"
+    );
+}
+
+void launcher_waits_for_palworld_exit_before_installing_payload()
+{
+    require(
+        !palverify::launcher_can_prepare_payload(
             palverify::LauncherStatus::Ready,
             true
         ),
-        "installed PalVerify payload allows Start"
+        "running Palworld must block payload installation"
+    );
+    require(
+        palverify::launcher_can_prepare_payload(
+            palverify::LauncherStatus::Ready,
+            false
+        ),
+        "a closed game must allow payload installation"
+    );
+    require(
+        !palverify::launcher_can_prepare_payload(
+            palverify::LauncherStatus::GameMissing,
+            false
+        ),
+        "non-ready launcher state must not install payload"
     );
 }
 
@@ -385,6 +455,31 @@ void support_log_is_copy_ready_and_sanitized()
     );
 }
 
+void unapproved_mod_parser_selects_only_safe_not_whitelisted_ids()
+{
+    const auto ids = palverify::extract_not_whitelisted_mod_ids(
+        "PREFLIGHT_REJECTED reason=UNAPPROVED_MOD "
+        "detail=MapUnlocker:NOT_WHITELISTED,"
+        "StatueMapMarkers:DUPLICATE_REPORT,"
+        "UE4SSExperimentalPW:NOT_WHITELISTED,"
+        "Bad/Path:NOT_WHITELISTED,"
+        "MapUnlocker:NOT_WHITELISTED"
+    );
+
+    require(
+        ids.size() == 1 && ids.front() == "MapUnlocker",
+        "launcher must remediate only unique, safe, non-managed "
+        "NOT_WHITELISTED mod IDs"
+    );
+    require(
+        palverify::extract_not_whitelisted_mod_ids(
+            "PREFLIGHT_REJECTED reason=HASH_MISMATCH "
+            "detail=MapUnlocker:NOT_WHITELISTED"
+        ).empty(),
+        "launcher must not remediate output from another rejection reason"
+    );
+}
+
 struct TestCase {
     std::string_view name;
     void (*run)();
@@ -426,12 +521,20 @@ auto main() -> int
             launcher_stays_locked_when_payload_installation_fails,
         },
         {
+            "Palworld must exit before payload installation",
+            launcher_waits_for_palworld_exit_before_installing_payload,
+        },
+        {
             "transient HTTP failures retry with a bound",
             transient_http_failures_are_retried_with_a_bound,
         },
         {
             "launcher failures produce copy-ready support logs",
             support_log_is_copy_ready_and_sanitized,
+        },
+        {
+            "launcher extracts safe unapproved mod IDs",
+            unapproved_mod_parser_selects_only_safe_not_whitelisted_ids,
         },
     };
 

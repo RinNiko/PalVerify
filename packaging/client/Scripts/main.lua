@@ -1,8 +1,18 @@
 local MOD_NAME = "PalVerify"
-local EXECUTABLE =
-    ".\\ue4ss\\Mods\\PalVerify\\Scripts\\PalVerifyClient.exe"
-local UI_QUEUE =
-    ".\\ue4ss\\Mods\\PalVerify\\Scripts\\ui-queue"
+
+local function script_directory()
+    local info =
+        debug and debug.getinfo and debug.getinfo(1, "S") or nil
+    local source = info and tostring(info.source or "") or ""
+    if source:sub(1, 1) == "@" then
+        source = source:sub(2)
+    end
+    source = source:gsub("/", "\\")
+    return source:match("^(.*\\)") or ".\\"
+end
+
+local SCRIPT_DIRECTORY = script_directory()
+local UI_QUEUE = SCRIPT_DIRECTORY .. "ui-queue"
 local ui_sequence = 0
 
 local function log(level, message)
@@ -20,13 +30,6 @@ local function to_string(value)
         return tostring(result)
     end
     return ""
-end
-
-local function prepare_ui_queue()
-    local command =
-        'cmd.exe /d /c if not exist "' .. UI_QUEUE
-        .. '" mkdir "' .. UI_QUEUE .. '"'
-    pcall(os.execute, command)
 end
 
 local function queue_ui_command(command)
@@ -86,42 +89,8 @@ local function on_chat(_, chat_message_param)
     end
 end
 
-local function start_client_agent()
-    local command = "cmd.exe /d /c " .. EXECUTABLE
-    ExecuteAsync(function()
-        local invoked, result, reason, code =
-            pcall(os.execute, command)
-        if not invoked or not result then
-            log(
-                "ERROR",
-                "PalVerifyClient.exe launch failed (invoked "
-                    .. tostring(invoked)
-                    .. ", result "
-                    .. tostring(result)
-                    .. ", reason "
-                    .. tostring(reason)
-                    .. ", code "
-                    .. tostring(code)
-                    .. ")."
-            )
-            return
-        end
-        log(
-            "INFO",
-            "PalVerifyClient.exe exited (reason "
-                .. tostring(reason)
-                .. ", code "
-                .. tostring(code)
-                .. ")."
-        )
-    end)
-    log("INFO", "Client observation agent requested.")
-end
-
-log("INFO", "Loading PalVerify client v1.0.")
-prepare_ui_queue()
+log("INFO", "Loading PalVerify client v1.0.11.")
 RegisterHook(
     "/Script/Pal.PalGameStateInGame:BroadcastChatMessage",
     on_chat
 )
-start_client_agent()

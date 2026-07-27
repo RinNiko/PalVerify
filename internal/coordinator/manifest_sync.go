@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	GitHubReleaseManifestURL = "https://raw.githubusercontent.com/RinNiko/PalVerify/main/palverify-launcher-manifest.json"
-	maxManifestBytes         = 32 * 1024
+	WebsiteManifestURL = "https://ae3mien.net/api/palverify/v1/launcher/manifest"
+	maxManifestBytes   = 32 * 1024
 )
 
 type ManifestFetcher func(context.Context) (LauncherManifest, error)
@@ -167,7 +167,7 @@ func NewGitHubManifestFetcher(client *http.Client) ManifestFetcher {
 		request, err := http.NewRequestWithContext(
 			ctx,
 			http.MethodGet,
-			GitHubReleaseManifestURL,
+			WebsiteManifestURL,
 			nil,
 		)
 		if err != nil {
@@ -183,7 +183,7 @@ func NewGitHubManifestFetcher(client *http.Client) ManifestFetcher {
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
 			return LauncherManifest{}, fmt.Errorf(
-				"GitHub returned HTTP %d",
+				"website manifest endpoint returned HTTP %d",
 				response.StatusCode,
 			)
 		}
@@ -273,10 +273,19 @@ func (store *Store) ApplyReleaseManifest(
 	if store.config.AllowedMods == nil {
 		store.config.AllowedMods = make(map[string]AllowedMod)
 	}
-	store.config.AllowedMods["PalVerify"] = AllowedMod{
+	updated := AllowedMod{
 		Version: manifest.PalVerifyVersion,
 		Digest:  manifest.PalVerifyPackageDigest,
 	}
+	if allowed.Version != "" && allowed.Digest != "" &&
+		(allowed.Version != updated.Version ||
+			!strings.EqualFold(allowed.Digest, updated.Digest)) {
+		updated.CompatiblePackages = []AllowedPackage{{
+			Version: allowed.Version,
+			Digest:  allowed.Digest,
+		}}
+	}
+	store.config.AllowedMods["PalVerify"] = updated
 	store.config.LauncherManifest = manifest
 	return true, nil
 }

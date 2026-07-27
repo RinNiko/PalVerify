@@ -1,14 +1,14 @@
 {
-  "launcherVersion": "1.0.2",
-  "minimumLauncherVersion": "1.0.2",
+  "launcherVersion": "1.0.20",
+  "minimumLauncherVersion": "1.0.20",
   "launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe",
-  "launcherSha256": "90c617dc318451a50bc1294038ac58fd956df921be4543b19d5954297f6f361e",
-  "palVerifyVersion": "1.0",
-  "palVerifyPackageDigest": "12ff403c557af07bd2da5b3321a0145698b7be8de614641b5d86766140401593",
+  "launcherSha256": "d292bf81e64777f04dda941ec23f95f5b4baf73b9f38e3aa1780e7f60f57fb4e",
+  "palVerifyVersion": "1.0.11",
+  "palVerifyPackageDigest": "74634100164368990370318f34ab8f8ad6acba9484dc4d9fe71d1c71c8621a48",
   "requiredPalworldBuildId": "24181527",
   "palworldVersion": "v1.0.1.100619",
   "serverOnline": true,
   "serverAddress": "lantica.dathost.net:28709",
-  "websiteUrl": "https://palworld-3-mien-website.vercel.app/",
-  "newsUrl": "https://palworld-3-mien-website.vercel.app/"
+  "websiteUrl": "https://ae3mien.net/",
+  "newsUrl": "https://ae3mien.net/"
 }

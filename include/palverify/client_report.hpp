@@ -5,11 +5,24 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace palverify {
+
+struct IntegrityEvidence {
+    std::string rule;
+    std::string source;
+    std::string file_name;
+    std::string sha256;
+    std::string signer_name;
+    std::string file_description;
+    std::string company_name;
+    std::string match_reason;
+    bool signature_valid;
+};
 
 struct ClientReport {
     std::string server_id;
@@ -20,6 +33,35 @@ struct ClientReport {
     std::string sent_at;
     std::vector<ReportedMod> mods;
     std::vector<std::string> violations;
+    std::vector<IntegrityEvidence> violation_evidence;
+};
+
+struct ClientPreflight {
+    std::string server_id;
+    std::string protocol_version;
+    std::vector<ReportedMod> mods;
+    std::vector<std::string> violations;
+    std::vector<IntegrityEvidence> violation_evidence;
+};
+
+struct ClientPreflightResponse {
+    bool accepted;
+    std::string reason;
+    std::string detail;
+};
+
+enum class ClientPreflightExit : unsigned long {
+    accepted = 0,
+    invalid_config = 20,
+    game_root_unavailable = 21,
+    steam_user_unavailable = 22,
+    scan_unavailable = 23,
+    transport_failed = 24,
+    http_rejected = 25,
+    invalid_response = 26,
+    integrity_violation = 27,
+    unapproved_mod = 28,
+    rejected = 29,
 };
 
 struct ClientConfig {
@@ -47,12 +89,31 @@ struct ClientUiCommand {
     std::uint64_t wall_clock_milliseconds
 ) -> std::uint64_t;
 
+[[nodiscard]] auto should_retry_client_http(
+    std::optional<unsigned long> status,
+    unsigned long win32_error,
+    unsigned int attempt,
+    unsigned int maximum_attempts
+) -> bool;
+
 [[nodiscard]] auto scan_mod_inventory(
     const std::filesystem::path& game_root
 ) -> std::vector<ReportedMod>;
 
 [[nodiscard]] auto build_client_report_json(const ClientReport& report)
     -> std::string;
+
+[[nodiscard]] auto format_runtime_integrity_message(
+    std::span<const std::string> violations,
+    std::span<const IntegrityEvidence> evidence
+) -> std::string;
+
+[[nodiscard]] auto build_client_preflight_json(
+    const ClientPreflight& preflight
+) -> std::string;
+
+[[nodiscard]] auto parse_client_preflight_response(std::string_view json)
+    -> std::optional<ClientPreflightResponse>;
 
 [[nodiscard]] auto build_challenge_request_json(
     std::string_view server_id,

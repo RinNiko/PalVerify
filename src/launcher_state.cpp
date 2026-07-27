@@ -326,6 +326,7 @@ auto parse_steam_app_state(std::string_view vdf)
     -> std::optional<SteamAppState>
 {
     const auto build_id = vdf_value(vdf, "buildid");
+    const auto build_id_number = parse_unsigned(build_id);
     const auto state_flags = parse_unsigned(vdf_value(vdf, "StateFlags"));
     const auto bytes_to_download =
         parse_unsigned(vdf_value(vdf, "BytesToDownload"));
@@ -333,18 +334,25 @@ auto parse_steam_app_state(std::string_view vdf)
         parse_unsigned(vdf_value(vdf, "BytesDownloaded"));
     const auto target_build =
         parse_unsigned(vdf_value(vdf, "TargetBuildID"));
-    if (!decimal(build_id) || !state_flags.has_value()) {
+    if (!decimal(build_id) || !build_id_number.has_value()
+        || !state_flags.has_value()) {
         return std::nullopt;
     }
+    constexpr auto fully_installed = 4ULL;
+    constexpr auto app_running = 64ULL;
+    const auto blocking_state_flags =
+        *state_flags & ~(fully_installed | app_running);
     return SteamAppState{
         .installed = true,
         .build_id = build_id,
         .update_pending =
-            *state_flags != 4
+            (*state_flags & fully_installed) == 0
+            || blocking_state_flags != 0
             || (bytes_to_download.value_or(0) > 0
                 && bytes_downloaded.value_or(0)
                     < bytes_to_download.value_or(0))
-            || target_build.value_or(0) != 0,
+            || (target_build.has_value() && *target_build != 0
+                && *target_build != *build_id_number),
     };
 }
 
@@ -380,10 +388,20 @@ auto evaluate_launcher(
 
 auto launcher_can_start(
     LauncherStatus status,
-    bool payload_installed
+    bool payload_installed,
+    bool preflight_succeeded
 ) -> bool
 {
-    return status == LauncherStatus::Ready && payload_installed;
+    return status == LauncherStatus::Ready && payload_installed
+        && preflight_succeeded;
+}
+
+auto launcher_can_prepare_payload(
+    LauncherStatus status,
+    bool game_running
+) -> bool
+{
+    return status == LauncherStatus::Ready && !game_running;
 }
 
 auto build_launcher_support_log(
@@ -407,6 +425,92 @@ auto build_launcher_support_log(
     append("local_palworld_build", failure.local_palworld_build);
     append("required_palworld_build", failure.required_palworld_build);
     return log;
+}
+
+auto extract_not_whitelisted_mod_ids(
+    std::string_view preflight_output
+) -> std::vector<std::string>
+{
+    constexpr std::string_view rejected_reason =
+        "reason=UNAPPROVED_MOD";
+    if (preflight_output.find(rejected_reason) == std::string_view::npos) {
+        return {};
+    }
+
+    constexpr std::string_view detail_prefix = "detail=";
+    const auto detail_position = preflight_output.find(detail_prefix);
+    if (detail_position == std::string_view::npos) {
+        return {};
+    }
+    auto detail = preflight_output.substr(
+        detail_position + detail_prefix.size()
+    );
+    if (const auto whitespace = detail.find_first_of(" \t\r\n");
+        whitespace != std::string_view::npos) {
+        detail = detail.substr(0, whitespace);
+    }
+
+    constexpr std::array<std::string_view, 3> managed_mod_ids{
+        "PalVerify",
+        "UE4SSExperimentalPW",
+        "StatueMapMarkers",
+    };
+    const auto safe_id = [](std::string_view value) {
+        return !value.empty() && value.size() <= 96
+            && std::ranges::all_of(value, [](char character) {
+                   const auto byte =
+                       static_cast<unsigned char>(character);
+                   return std::isalnum(byte) != 0 || character == '.'
+                       || character == '_' || character == '-'
+                       || character == ':';
+               });
+    };
+    const auto managed_id = [&managed_mod_ids](std::string_view value) {
+        return std::ranges::any_of(
+            managed_mod_ids,
+            [value](std::string_view managed) {
+                return value.size() == managed.size()
+                    && std::ranges::equal(
+                        value,
+                        managed,
+                        [](char left, char right) {
+                            return std::tolower(
+                                       static_cast<unsigned char>(left)
+                                   )
+                                == std::tolower(
+                                       static_cast<unsigned char>(right)
+                                   );
+                        }
+                    );
+            }
+        );
+    };
+
+    std::vector<std::string> ids;
+    std::size_t start = 0;
+    while (start < detail.size()) {
+        const auto comma = detail.find(',', start);
+        const auto entry = detail.substr(
+            start,
+            comma == std::string_view::npos
+                ? detail.size() - start
+                : comma - start
+        );
+        const auto rule_separator = entry.rfind(':');
+        if (rule_separator != std::string_view::npos
+            && entry.substr(rule_separator + 1) == "NOT_WHITELISTED") {
+            const auto id = entry.substr(0, rule_separator);
+            if (safe_id(id) && !managed_id(id)
+                && std::ranges::find(ids, id) == ids.end()) {
+                ids.emplace_back(id);
+            }
+        }
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    return ids;
 }
 
 }  // namespace palverify

@@ -29,6 +29,21 @@ func main() {
 	if err := json.Unmarshal(body, &config); err != nil {
 		log.Fatalf("decode config: %v", err)
 	}
+	if config.DisciplineStatePath == "" {
+		config.DisciplineStatePath = filepath.Join(
+			filepath.Dir(executable),
+			"discipline-state.json",
+		)
+	}
+	if config.PalDefenderLogDirectory == "" {
+		config.PalDefenderLogDirectory =
+			defaultPalDefenderLogDirectory(executable)
+	}
+	if webhookURL := os.Getenv(
+		"PALVERIFY_DISCORD_WEBHOOK_URL",
+	); webhookURL != "" {
+		config.DiscordWebhookURL = webhookURL
+	}
 	if err := config.Validate(); err != nil {
 		log.Fatalf("invalid config: %v", err)
 	}
@@ -42,11 +57,12 @@ func main() {
 			10*time.Second,
 		)
 		defer cancel()
-		kicks, syncErr := serveragent.SyncOnce(
+		enforced, syncErr := serveragent.SyncOnce(
 			ctx,
 			client,
 			config,
 			time.Now(),
+			log.Default(),
 		)
 		if syncErr != nil {
 			if !startupReady &&
@@ -58,14 +74,15 @@ func main() {
 			return
 		}
 		startupReady = true
-		if kicks != 0 {
-			log.Printf("[PalVerify] kicked=%d", kicks)
+		if enforced != 0 {
+			log.Printf("[PalVerify] enforcement_actions=%d", enforced)
 		}
 	}
 
 	log.Printf(
-		"[PalVerify] server agent started version=1.0 interval=%ds",
+		"[PalVerify] server agent started version=1.0 interval=%ds admin_audit=true discord_audit=%t",
 		config.IntervalSeconds,
+		config.DiscordWebhookURL != "",
 	)
 	run()
 	ticker := time.NewTicker(time.Duration(config.IntervalSeconds) * time.Second)
@@ -73,4 +90,16 @@ func main() {
 	for range ticker.C {
 		run()
 	}
+}
+
+func defaultPalDefenderLogDirectory(executable string) string {
+	return filepath.Clean(filepath.Join(
+		filepath.Dir(executable),
+		"..",
+		"..",
+		"..",
+		"..",
+		"PalDefender",
+		"Logs",
+	))
 }

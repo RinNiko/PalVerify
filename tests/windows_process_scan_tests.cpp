@@ -108,6 +108,26 @@ int main(int argc, char* argv[])
                 },
             "known injected DLL hash must survive file renaming"
         );
+        const auto known_module_matches =
+            palverify::detect_module_matches(modules);
+        require(
+            known_module_matches.size() == 1,
+            "known injected DLL must include one evidence record"
+        );
+        require(
+            known_module_matches[0].image_name == "renamed.dll"
+                && known_module_matches[0].sha256 == modules[0].sha256
+                && known_module_matches[0].match_reason
+                    == "KNOWN_INJECTED_MODULE_HASH",
+            "module evidence must identify the safe basename, digest, and match"
+        );
+        require(
+            known_module_matches[0].image_name.find('\\')
+                    == std::string::npos
+                && known_module_matches[0].image_name.find('/')
+                    == std::string::npos,
+            "module evidence must never expose a full path"
+        );
 
         const std::array external_modules{
             palverify::ModuleEvidence{
@@ -165,7 +185,7 @@ int main(int argc, char* argv[])
                 .system_location = false,
                 .signer_name = "WeMod LLC",
                 .file_description = "TrainerLib Plugin",
-                .company_name = "WeMod LLC",
+                .company_name = "Wand Technologies",
             },
         };
         require(
@@ -174,6 +194,17 @@ int main(int argc, char* argv[])
                     palverify::ProcessRuleId::InjectedModuleDetected,
                 },
             "signed Wand trainer DLL must never be allowed in Palworld"
+        );
+        const auto wand_matches =
+            palverify::detect_module_matches(wand_modules);
+        require(
+            wand_matches.size() == 1
+                && wand_matches[0].signer_name == "WeMod LLC"
+                && wand_matches[0].file_description == "TrainerLib Plugin"
+                && wand_matches[0].company_name == "Wand Technologies"
+                && wand_matches[0].match_reason
+                    == "WEMOD_MODULE_SIGNATURE",
+            "signed trainer evidence must name its software, company, signer, and matching rule"
         );
 
         const std::array renamed_wand_modules{

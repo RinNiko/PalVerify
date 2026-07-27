@@ -1,0 +1,25 @@
+{
+  "ModName": "UE4SS Experimental (Palworld)",
+  "PackageName": "UE4SSExperimentalPW",
+  "Thumbnail": "thumbnail.png",
+  "Version": "experimental-palworld-6",
+  "DebugMode": false,
+  "MinRevision": 82182,
+  "Author": "Oak",
+  "Dependencies": null,
+  "InstallRule": [
+    {
+      "Type": "UE4SS",
+      "Targets": [
+        "."
+      ]
+    },
+    {
+      "Type": "UE4SS",
+      "IsServer": true,
+      "Targets": [
+        "."
+      ]
+    }
+  ]
+}

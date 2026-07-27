@@ -10,3 +10,4 @@ node_modules/
 *.VC.VC.opendb
 *.log
 .tmp-remote-audit-*/
+.tmp-palverify-*/
