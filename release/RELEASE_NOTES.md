@@ -1,5 +1,9 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.21 và client PalVerify v1.0.12 chỉ báo cáo bản
+  Workshop đang hoạt động trong `Palworld\Mods\Workshop` khi Steam Workshop
+  còn giữ một bản nguồn có cùng `PackageName`. Việc này ngăn bản nguồn cũ tạo
+  `DIGEST_MISMATCH` giả, trong khi các package có tên khác vẫn được kiểm tra.
 - Launcher nội bộ v1.0.20 và client PalVerify v1.0.11 bổ sung bằng chứng
   chẩn đoán an toàn cho DLL/module bị nghi vấn: tên file, mô tả sản phẩm,
   công ty, signer và rule match. Cảnh báo trên máy người chơi và hồ sơ admin

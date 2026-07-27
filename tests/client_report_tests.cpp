@@ -215,6 +215,50 @@ void configured_workshop_inventory_reports_external_packages()
     std::filesystem::remove_all(root, ignored);
 }
 
+void installed_workshop_package_wins_over_external_source_duplicate()
+{
+    const auto root = temporary_root("workshop-source-duplicate");
+    const auto external_root = root / "SteamWorkshop";
+    write_file(
+        root / "Mods" / "PalModSettings.ini",
+        "[PalModSettings]\n"
+        "bGlobalEnableMod=True\n"
+        "WorkshopRootDir=" + external_root.string() + "\n"
+        "ConfigVersion=1.0\n"
+    );
+
+    const auto local_package =
+        root / "Mods" / "Workshop" / "3625223587";
+    write_file(
+        local_package / "Info.json",
+        R"({"PackageName":"UE4SSExperimentalPW","Version":"stable"})"
+    );
+    write_file(local_package / "UE4SS.dll", "installed-active-copy");
+
+    const auto external_package = external_root / "3625223587";
+    write_file(
+        external_package / "Info.json",
+        R"({"PackageName":"UE4SSExperimentalPW","Version":"stable"})"
+    );
+    write_file(external_package / "UE4SS.dll", "steam-source-copy");
+
+    const auto inventory = palverify::scan_mod_inventory(root);
+    std::size_t ue4ss_reports = 0;
+    for (const auto& mod : inventory) {
+        if (mod.id == "UE4SSExperimentalPW") {
+            ++ue4ss_reports;
+        }
+    }
+    require_equal(
+        ue4ss_reports,
+        std::size_t{1},
+        "installed Workshop package must suppress its external source duplicate"
+    );
+
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+}
+
 void report_json_contains_only_compact_policy_fields()
 {
     const palverify::ClientReport report{
@@ -621,6 +665,10 @@ auto main() -> int
         {
             "configured workshop root reports external packages",
             configured_workshop_inventory_reports_external_packages,
+        },
+        {
+            "installed workshop package wins over external source duplicate",
+            installed_workshop_package_wins_over_external_source_duplicate,
         },
         {
             "report JSON stays compact",

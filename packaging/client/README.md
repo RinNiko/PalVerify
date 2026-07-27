@@ -8,7 +8,7 @@ does not transmit a file list, executable path, or process inventory.
 
 Logs are written under `%LOCALAPPDATA%\PalVerify\PalVerifyClient.log`.
 
-Version 1.0.11 enforces the exact server whitelist for Steam Windows players,
+Version 1.0.12 enforces the exact server whitelist for Steam Windows players,
 includes packages from Palworld's configured Workshop root in the compact mod
 inventory, reports enabled nested UE4SS mods by compact folder name, uses a
 one-time challenge bound to an active server session instead of a shared client

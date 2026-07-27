@@ -16,6 +16,7 @@
 #include <optional>
 #include <ranges>
 #include <regex>
+#include <set>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -367,9 +368,11 @@ void scan_enabled_ue4ss_mods(
 
 void scan_workshop_root(
     const std::filesystem::path& root,
-    std::vector<ReportedMod>& inventory
+    std::vector<ReportedMod>& inventory,
+    std::set<std::string>& reported_packages
 )
 {
+    std::vector<std::filesystem::path> package_roots;
     std::error_code error;
     for (std::filesystem::directory_iterator iterator{
              root,
@@ -392,17 +395,27 @@ void scan_workshop_root(
             error.clear();
             continue;
         }
+        package_roots.push_back(iterator->path());
+    }
+    std::ranges::sort(package_roots);
+
+    for (const auto& package_root : package_roots) {
+        const auto info_path = package_root / "Info.json";
         const auto info = read_text(info_path);
         auto id = json_field(info, "PackageName");
         if (id.empty()) {
-            id = iterator->path().filename().string();
+            id = package_root.filename().string();
+        }
+        id = compact_id(id);
+        if (!reported_packages.insert(id).second) {
+            continue;
         }
         inventory.push_back({
-            .id = compact_id(id),
+            .id = id,
             .version = compact_id(json_field(info, "Version")),
-            .digest = package_digest(iterator->path()),
+            .digest = package_digest(package_root),
         });
-        scan_enabled_ue4ss_mods(iterator->path(), inventory);
+        scan_enabled_ue4ss_mods(package_root, inventory);
     }
 }
 
@@ -412,7 +425,8 @@ void scan_workshop(
 )
 {
     const auto local_root = game_root / "Mods" / "Workshop";
-    scan_workshop_root(local_root, inventory);
+    std::set<std::string> reported_packages;
+    scan_workshop_root(local_root, inventory, reported_packages);
     const auto external_root = configured_workshop_root(game_root);
     if (external_root.has_value()) {
         std::error_code local_error;
@@ -452,7 +466,7 @@ void scan_workshop(
         if (local_text == external_text) {
             return;
         }
-        scan_workshop_root(*external_root, inventory);
+        scan_workshop_root(*external_root, inventory, reported_packages);
     }
 }
 
