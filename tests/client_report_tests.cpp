@@ -259,6 +259,43 @@ void installed_workshop_package_wins_over_external_source_duplicate()
     std::filesystem::remove_all(root, ignored);
 }
 
+void managed_palverify_cache_does_not_change_ue4ss_parent_digest()
+{
+    const auto root = temporary_root("ue4ss-managed-palverify-cache");
+    const auto package =
+        root / "Mods" / "Workshop" / "3625223587";
+    write_file(
+        package / "Info.json",
+        R"({"PackageName":"UE4SSExperimentalPW","Version":"stable"})"
+    );
+    write_file(package / "UE4SS.dll", "ue4ss-core");
+    const auto managed_client =
+        package / "Mods" / "PalVerify" / "Scripts" / "PalVerifyClient.exe";
+    write_file(managed_client, "client-v1");
+
+    const auto before = palverify::scan_mod_inventory(root);
+    require_equal(before.size(), std::size_t{1}, "one UE4SS package");
+    const auto original_digest = before.front().digest;
+
+    write_file(managed_client, "client-v2");
+    const auto after_client_update = palverify::scan_mod_inventory(root);
+    require_equal(
+        after_client_update.front().digest,
+        original_digest,
+        "managed PalVerify cache must not alter the UE4SS parent digest"
+    );
+
+    write_file(package / "UE4SS.dll", "tampered-ue4ss-core");
+    const auto after_core_change = palverify::scan_mod_inventory(root);
+    require(
+        after_core_change.front().digest != original_digest,
+        "UE4SS core changes must still alter its parent digest"
+    );
+
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+}
+
 void report_json_contains_only_compact_policy_fields()
 {
     const palverify::ClientReport report{
@@ -669,6 +706,10 @@ auto main() -> int
         {
             "installed workshop package wins over external source duplicate",
             installed_workshop_package_wins_over_external_source_duplicate,
+        },
+        {
+            "managed PalVerify cache is excluded from UE4SS parent digest",
+            managed_palverify_cache_does_not_change_ue4ss_parent_digest,
         },
         {
             "report JSON stays compact",

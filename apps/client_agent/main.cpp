@@ -807,7 +807,7 @@ auto wmain(int argc, wchar_t** argv) -> int
         }
     }
 
-    write_event(log, "CLIENT_STARTED protocol=3 version=1.0.12");
+    write_event(log, "CLIENT_STARTED protocol=3 version=1.0.13");
     start_client_ui_worker(
         module_directory() / "ui-queue",
         config->website

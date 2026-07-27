@@ -1,5 +1,10 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.22 và client PalVerify v1.0.13 tách cache
+  `UE4SSExperimentalPW\Mods\PalVerify` khỏi digest package cha. Cache này vẫn
+  được xác minh qua package `PalVerify` riêng, còn UE4SS core vẫn đổi digest
+  khi bị sửa. Vì vậy cập nhật client sau này không còn làm UE4SS
+  `DIGEST_MISMATCH`.
 - Launcher nội bộ v1.0.21 và client PalVerify v1.0.12 chỉ báo cáo bản
   Workshop đang hoạt động trong `Palworld\Mods\Workshop` khi Steam Workshop
   còn giữ một bản nguồn có cùng `PackageName`. Việc này ngăn bản nguồn cũ tạo

@@ -89,7 +89,7 @@ local function on_chat(_, chat_message_param)
     end
 end
 
-log("INFO", "Loading PalVerify client v1.0.12.")
+log("INFO", "Loading PalVerify client v1.0.13.")
 RegisterHook(
     "/Script/Pal.PalGameStateInGame:BroadcastChatMessage",
     on_chat

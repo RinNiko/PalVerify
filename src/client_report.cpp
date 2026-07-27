@@ -160,7 +160,36 @@ private:
     return hex_digest(hash.finish());
 }
 
-[[nodiscard]] auto package_digest(const std::filesystem::path& root)
+[[nodiscard]] auto ascii_equal_ignore_case(
+    std::string_view left,
+    std::string_view right
+) -> bool
+{
+    return left.size() == right.size()
+        && std::ranges::equal(left, right, [](char lhs, char rhs) {
+               return std::tolower(static_cast<unsigned char>(lhs))
+                   == std::tolower(static_cast<unsigned char>(rhs));
+           });
+}
+
+[[nodiscard]] auto is_managed_palverify_cache(
+    const std::filesystem::path& relative
+) -> bool
+{
+    auto component = relative.begin();
+    if (component == relative.end()
+        || !ascii_equal_ignore_case(component->string(), "Mods")) {
+        return false;
+    }
+    ++component;
+    return component != relative.end()
+        && ascii_equal_ignore_case(component->string(), "PalVerify");
+}
+
+[[nodiscard]] auto package_digest(
+    const std::filesystem::path& root,
+    bool exclude_managed_palverify_cache = false
+)
     -> std::string
 {
     std::vector<std::filesystem::path> files;
@@ -178,6 +207,12 @@ private:
             continue;
         }
         if (iterator->is_regular_file(error) && !error) {
+            const auto relative =
+                std::filesystem::relative(iterator->path(), root);
+            if (exclude_managed_palverify_cache
+                && is_managed_palverify_cache(relative)) {
+                continue;
+            }
             files.push_back(iterator->path());
         }
         error.clear();
@@ -413,7 +448,10 @@ void scan_workshop_root(
         inventory.push_back({
             .id = id,
             .version = compact_id(json_field(info, "Version")),
-            .digest = package_digest(package_root),
+            .digest = package_digest(
+                package_root,
+                id == "UE4SSExperimentalPW"
+            ),
         });
         scan_enabled_ue4ss_mods(package_root, inventory);
     }

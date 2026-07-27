@@ -40,9 +40,9 @@ namespace {
 
 constexpr wchar_t window_class[] = L"Pal3MienLauncherWindow";
 constexpr wchar_t window_title[] = L"Palworld 3 Miền";
-constexpr std::string_view launcher_version = "1.0.21";
+constexpr std::string_view launcher_version = "1.0.22";
 constexpr std::string_view launcher_display_version = "1.0";
-constexpr std::string_view palverify_version = "1.0.12";
+constexpr std::string_view palverify_version = "1.0.13";
 constexpr std::string_view default_manifest_url =
     "https://ae3mien.net/api/palverify/v1/launcher/manifest";
 constexpr std::string_view release_manifest_asset_name =
