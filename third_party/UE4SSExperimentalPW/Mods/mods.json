@@ -34,5 +34,9 @@
     {
         "mod_name": "StatueMapMarkers",
         "mod_enabled": true
+    },
+    {
+        "mod_name": "PalHud",
+        "mod_enabled": true
     }
 ]

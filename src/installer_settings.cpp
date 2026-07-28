@@ -420,6 +420,85 @@ namespace {
     return updated;
 }
 
+[[nodiscard]] auto enable_palhud_json(
+    std::string_view existing
+) -> std::string
+{
+    const std::string source{existing};
+    static const std::regex enabled_pattern{
+        R"regex((\{[^{}]*"mod_name"\s*:\s*"PalHud"[^{}]*"mod_enabled"\s*:\s*)(?:true|false))regex",
+        std::regex::ECMAScript | std::regex::icase,
+    };
+    if (std::regex_search(source, enabled_pattern)) {
+        return std::regex_replace(
+            source,
+            enabled_pattern,
+            "$1true",
+            std::regex_constants::format_first_only
+        );
+    }
+
+    const auto closing = source.rfind(']');
+    const std::string entry =
+        "  {\n"
+        "    \"mod_name\": \"PalHud\",\n"
+        "    \"mod_enabled\": true\n"
+        "  }\n";
+    if (closing == std::string::npos) {
+        return "[\n" + entry + "]\n";
+    }
+
+    auto updated = source;
+    const auto has_entries =
+        source.substr(0, closing).find('{') != std::string::npos;
+    if (has_entries) {
+        auto last_content = closing;
+        while (last_content > 0
+               && std::isspace(
+                      static_cast<unsigned char>(source[last_content - 1])
+                  )
+                    != 0) {
+            --last_content;
+        }
+        updated.insert(last_content, ",\n" + entry);
+    } else {
+        updated.insert(closing, "\n" + entry);
+    }
+    return updated;
+}
+
+[[nodiscard]] auto enable_palhud_text(
+    std::string_view existing
+) -> std::string
+{
+    const auto newline =
+        existing.find("\r\n") != std::string_view::npos ? "\r\n" : "\n";
+    auto lines = split_lines(existing);
+    bool found = false;
+    for (auto& line : lines) {
+        const auto colon = line.find(':');
+        if (colon == std::string::npos
+            || !ascii_equals_ignore_case(
+                trim(std::string_view{line}.substr(0, colon)),
+                "PalHud"
+            )) {
+            continue;
+        }
+        line = "PalHud : 1";
+        found = true;
+    }
+    if (!found) {
+        lines.emplace_back("PalHud : 1");
+    }
+
+    std::string updated;
+    for (const auto& line : lines) {
+        updated += line;
+        updated += newline;
+    }
+    return updated;
+}
+
 [[nodiscard]] auto enable_palverify_watchdog_json(
     std::string_view existing
 ) -> std::string
@@ -523,6 +602,8 @@ namespace {
     workshop_root_override = local_workshop_root;
     const auto target = local_workshop_root / "3625223587";
     bool copied_statue_markers = false;
+    bool copied_palhud_script = false;
+    bool copied_palhud_logo = false;
     for (const auto& file : files) {
         const auto relative = managed_ue4ss_relative_path(
             file.relative_path.lexically_normal()
@@ -540,11 +621,23 @@ namespace {
             || relative->generic_string().starts_with(
                 "Mods/StatueMapMarkers/"
             );
+        copied_palhud_script = copied_palhud_script
+            || relative->generic_string()
+                   == "Mods/PalHud/Scripts/main.lua";
+        copied_palhud_logo = copied_palhud_logo
+            || relative->generic_string()
+                   == "Mods/PalHud/Assets/logo-wordmark-hud.png";
     }
     if (!copied_statue_markers) {
         return {
             .success = false,
             .detail = "managed-statue-markers-incomplete",
+        };
+    }
+    if (!copied_palhud_script || !copied_palhud_logo) {
+        return {
+            .success = false,
+            .detail = "managed-palhud-incomplete",
         };
     }
 
@@ -597,10 +690,10 @@ namespace {
     const auto json_path = mods_directory / "mods.json";
     const auto text_path = mods_directory / "mods.txt";
     const auto json = enable_palverify_watchdog_json(
-        enable_statue_markers_json(read_file(json_path))
+        enable_palhud_json(enable_statue_markers_json(read_file(json_path)))
     );
     const auto text = enable_palverify_watchdog_text(
-        enable_statue_markers_text(read_file(text_path))
+        enable_palhud_text(enable_statue_markers_text(read_file(text_path)))
     );
     if (!write_file_atomically(json_path, json, ".pal3mien-tmp")
         || !write_file_atomically(text_path, text, ".pal3mien-tmp")) {
@@ -691,10 +784,11 @@ namespace {
 
 [[nodiscard]] auto protected_mod_id(std::string_view value) -> bool
 {
-    constexpr std::array<std::string_view, 3> protected_ids{
+    constexpr std::array<std::string_view, 4> protected_ids{
         "PalVerify",
         "UE4SSExperimentalPW",
         "StatueMapMarkers",
+        "PalHud",
     };
     return std::ranges::any_of(
         protected_ids,

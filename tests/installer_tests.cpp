@@ -287,6 +287,14 @@ void installer_isolates_managed_mods_from_external_workshop()
         payload_root / "managed" / "UE4SSExperimentalPW" / "Mods"
             / "StatueMapMarkers" / "Scripts"
     );
+    std::filesystem::create_directories(
+        payload_root / "managed" / "UE4SSExperimentalPW" / "Mods"
+            / "PalHud" / "Scripts"
+    );
+    std::filesystem::create_directories(
+        payload_root / "managed" / "UE4SSExperimentalPW" / "Mods"
+            / "PalHud" / "Assets"
+    );
     std::filesystem::create_directories(ue4ss_root / "Mods");
     std::filesystem::create_directories(settings_path.parent_path());
 
@@ -347,6 +355,22 @@ void installer_isolates_managed_mods_from_external_workshop()
         };
     }
     {
+        std::ofstream hud_script{
+            payload_root / "managed" / "UE4SSExperimentalPW" / "Mods"
+                / "PalHud" / "Scripts" / "main.lua",
+            std::ios::binary,
+        };
+        hud_script << "return true";
+    }
+    {
+        std::ofstream hud_logo{
+            payload_root / "managed" / "UE4SSExperimentalPW" / "Mods"
+                / "PalHud" / "Assets" / "logo-wordmark-hud.png",
+            std::ios::binary,
+        };
+        hud_logo << "png-fixture";
+    }
+    {
         std::ofstream external_info{
             ue4ss_root / "Info.json",
             std::ios::binary,
@@ -393,6 +417,19 @@ void installer_isolates_managed_mods_from_external_workshop()
         "StatueMapMarkers must be copied into launcher-managed Workshop"
     );
     require(
+        std::filesystem::is_regular_file(
+            local_ue4ss_root / "Mods" / "PalHud" / "Scripts" / "main.lua"
+        ),
+        "PalHud must be copied into launcher-managed Workshop"
+    );
+    require(
+        std::filesystem::is_regular_file(
+            local_ue4ss_root / "Mods" / "PalHud" / "Assets"
+                / "logo-wordmark-hud.png"
+        ),
+        "PalHud background logo must be installed with the client HUD"
+    );
+    require(
         !std::filesystem::exists(
             ue4ss_root / "Mods" / "StatueMapMarkers"
         ),
@@ -421,6 +458,11 @@ void installer_isolates_managed_mods_from_external_workshop()
     );
     require_contains(
         mods_json,
+        "\"mod_name\": \"PalHud\"",
+        "PalHud must be added to mods.json"
+    );
+    require_contains(
+        mods_json,
         "\"mod_enabled\": true",
         "StatueMapMarkers must be enabled in mods.json"
     );
@@ -438,6 +480,11 @@ void installer_isolates_managed_mods_from_external_workshop()
         mods_txt,
         "StatueMapMarkers : 1",
         "StatueMapMarkers must be enabled in mods.txt"
+    );
+    require_contains(
+        mods_txt,
+        "PalHud : 1",
+        "PalHud must be enabled in mods.txt"
     );
 
     std::ifstream settings_stream{settings_path, std::ios::binary};
@@ -578,6 +625,15 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
             "enabled.txt",
             ""
         ),
+        payload_file(
+            "managed/UE4SSExperimentalPW/Mods/PalHud/Scripts/main.lua",
+            "return true"
+        ),
+        payload_file(
+            "managed/UE4SSExperimentalPW/Mods/PalHud/Assets/"
+            "logo-wordmark-hud.png",
+            "png-fixture"
+        ),
     };
 
     const auto result = palverify::install_palverify_payload(
@@ -592,6 +648,13 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
                 / "Mods" / "StatueMapMarkers" / "Scripts" / "main.lua"
         ),
         "clean machines must receive the local StatueMapMarkers payload"
+    );
+    require(
+        std::filesystem::is_regular_file(
+            local_workshop_root / "3625223587"
+                / "Mods" / "PalHud" / "Assets" / "logo-wordmark-hud.png"
+        ),
+        "clean machines must receive the PalHud client assets"
     );
     const auto watchdog_root =
         local_workshop_root / "3625223587" / "Mods" / "PalVerify"
@@ -636,6 +699,11 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
         mods_text,
         "PalVerify : 1",
         "the managed UE4SS runtime must enable the PalVerify watchdog"
+    );
+    require_contains(
+        mods_text,
+        "PalHud : 1",
+        "the managed UE4SS runtime must enable PalHud"
     );
 
     std::ifstream settings_stream{settings_path, std::ios::binary};
@@ -697,6 +765,9 @@ void unapproved_mods_are_quarantined_without_touching_allowed_mods()
     std::filesystem::create_directories(
         ue4ss_root / "Mods" / "StatueMapMarkers"
     );
+    std::filesystem::create_directories(
+        ue4ss_root / "Mods" / "PalHud"
+    );
     std::filesystem::create_directories(paks_root);
     {
         std::ofstream executable{
@@ -737,6 +808,12 @@ void unapproved_mods_are_quarantined_without_touching_allowed_mods()
         };
     }
     {
+        std::ofstream enabled{
+            ue4ss_root / "Mods" / "PalHud" / "enabled.txt",
+            std::ios::binary,
+        };
+    }
+    {
         std::ofstream pak{
             paks_root / "CheatMap.pak",
             std::ios::binary,
@@ -749,6 +826,7 @@ void unapproved_mods_are_quarantined_without_touching_allowed_mods()
         "BadLua",
         "legacy-pak:CheatMap.pak",
         "StatueMapMarkers",
+        "PalHud",
     };
     const auto result = palverify::quarantine_unapproved_mods(
         game_root,
@@ -783,6 +861,12 @@ void unapproved_mods_are_quarantined_without_touching_allowed_mods()
             ue4ss_root / "Mods" / "StatueMapMarkers" / "enabled.txt"
         ),
         "launcher-managed mods must never be quarantined"
+    );
+    require(
+        std::filesystem::is_regular_file(
+            ue4ss_root / "Mods" / "PalHud" / "enabled.txt"
+        ),
+        "PalHud must never be quarantined as an unapproved player mod"
     );
 
     std::size_t quarantined_files = 0;

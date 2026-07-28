@@ -65,6 +65,7 @@ $packageInfo = Require-File "packaging\Info.json"
 $serverConfig = Require-File `
     "packaging\server\Scripts\server-config.example.json"
 $releaseManifest = Require-File "release\palverify-launcher-manifest.json"
+$gitAttributes = Require-File ".gitattributes"
 $installerIcon = Join-Path `
     $projectRoot `
     "resources\launcher\pal3mien.ico"
@@ -160,6 +161,12 @@ Require-Text $basePackager 'palVerifyPackageDigest' `
     "release packaging must verify the GitHub manifest package digest"
 Require-Text $basePackager '[StringComparer]::Ordinal' `
     "package digest paths must use the same ordinal order as the client"
+Require-Text $gitAttributes 'packaging/Info.json binary' `
+    "package metadata bytes must remain stable across Windows checkouts"
+Require-Text $gitAttributes 'packaging/client/README.md binary' `
+    "package README bytes must remain stable across Windows checkouts"
+Require-Text $gitAttributes 'packaging/client/Scripts/main.lua binary' `
+    "package probe bytes must remain stable across Windows checkouts"
 Require-Text $cmake 'palverify_payload_packer' `
     "CMake must build a dedicated payload resource packer"
 Require-Text $cmake 'embedded-palverify-payload.bin' `
@@ -182,6 +189,8 @@ Require-Text $launcherStateSource 'extract_not_whitelisted_mod_ids' `
     "launcher must parse exact NOT_WHITELISTED preflight failures"
 Require-Text $installerSource 'StatueMapMarkers : 1' `
     "installer must activate StatueMapMarkers in UE4SS mods.txt"
+Require-Text $installerSource 'PalHud : 1' `
+    "installer must activate PalHud in UE4SS mods.txt"
 Require-Text $installerSource 'PalVerify : 1' `
     "installer must activate the PalVerify watchdog in UE4SS mods.txt"
 Require-Text $launcherResourceHeader '#define IDR_PALVERIFY_PAYLOAD 216' `
@@ -269,8 +278,8 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.23"' `
-    "launcher must ship the kick-reason client update"
+Require-Text $launcherSource 'launcher_version = "1.0.24"' `
+    "launcher must ship the managed PalHud payload revision"
 Require-Text $launcherSource 'palworld_is_running()' `
     "launcher must detect a running Palworld process before installing mods"
 Require-Text $launcherSource 'waiting_for_game_exit' `
@@ -290,10 +299,10 @@ Require-Text $launcherSource 'palverify_version = "1.0.14"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.23"' `
-    "stable manifest must trigger the kick-reason client update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.23"' `
-    "stable manifest must require the kick-reason client update"
+Require-Text $releaseManifest '"launcherVersion": "1.0.24"' `
+    "stable manifest must trigger the managed PalHud payload update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.24"' `
+    "stable manifest must require the managed PalHud payload revision"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
 Require-Text $launcherSource `

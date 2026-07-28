@@ -233,6 +233,30 @@ if(WIN32)
             /utf-8
     )
 
+    add_executable(palverify_release_inventory
+        apps/release_inventory/main.cpp
+    )
+    target_link_libraries(
+        palverify_release_inventory
+        PRIVATE
+            palverify_installer_core
+            palverify_windows_integrity
+            bcrypt
+    )
+    target_compile_features(
+        palverify_release_inventory
+        PRIVATE
+            cxx_std_20
+    )
+    target_compile_options(
+        palverify_release_inventory
+        PRIVATE
+            /W4
+            /WX
+            /permissive-
+            /utf-8
+    )
+
     set(
         PALVERIFY_GENERATED_DIRECTORY
         "${CMAKE_BINARY_DIR}/generated"
