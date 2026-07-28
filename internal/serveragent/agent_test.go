@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -323,6 +324,54 @@ func TestSyncOncePostsSafeAuditToAdminEndpoint(t *testing.T) {
 	}
 	if strings.Contains(auditBody, "0001-01-01") {
 		t.Fatalf("admin audit included a zero timestamp: %s", auditBody)
+	}
+}
+
+func TestSendAdminAuditBoundsDetailToWebsiteContract(t *testing.T) {
+	var receivedDetail string
+	coordinator := httptest.NewServer(http.HandlerFunc(func(
+		response http.ResponseWriter,
+		request *http.Request,
+	) {
+		var payload map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode admin audit: %v", err)
+		}
+		receivedDetail, _ = payload["detail"].(string)
+		if len(utf16.Encode([]rune(receivedDetail))) > 1024 {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		response.WriteHeader(http.StatusAccepted)
+	}))
+	defer coordinator.Close()
+
+	event := discordAuditEvent{
+		EventID:    "event_0123456789abcdef",
+		OccurredAt: time.Now(),
+		ServerID:   "bnb",
+		PlayerName: "TestPlayer",
+		PlayerRef:  "pv_0123456789ab",
+		UserID:     "steam_00000000000000001",
+		Action:     "KICK",
+		Reason:     "UNAPPROVED_MOD",
+		Detail:     strings.Repeat("😀", 700),
+	}
+	err := sendAdminAudit(
+		context.Background(),
+		&http.Client{Timeout: time.Second},
+		coordinator.URL,
+		"server-token",
+		event,
+	)
+	if err != nil {
+		t.Fatalf("send admin audit: %v", err)
+	}
+	if len(utf16.Encode([]rune(receivedDetail))) != 1024 {
+		t.Fatalf(
+			"admin audit detail length = %d UTF-16 units, want 1024",
+			len(utf16.Encode([]rune(receivedDetail))),
+		)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 const temporaryIntegrityBanDuration = 24 * time.Hour
@@ -421,8 +422,8 @@ func sendAdminAudit(
 	if event.IP != "" {
 		payload["ip"] = event.IP
 	}
-	if event.Detail != "" {
-		payload["detail"] = event.Detail
+	if detail := safeAdminAuditText(event.Detail, 1024); detail != "" {
+		payload["detail"] = detail
 	}
 	if len(event.Mods) != 0 {
 		payload["mods"] = event.Mods
@@ -640,6 +641,33 @@ func safeDiscordValue(value string, maximum int) string {
 		value = string(runes[:maximum])
 	}
 	return strings.TrimSpace(value)
+}
+
+func safeAdminAuditText(value string, maximumUTF16Units int) string {
+	value = strings.TrimSpace(value)
+	value = strings.Map(func(character rune) rune {
+		if character < 0x20 || character == 0x7f {
+			return ' '
+		}
+		return character
+	}, value)
+	if maximumUTF16Units <= 0 {
+		return ""
+	}
+	units := 0
+	var bounded strings.Builder
+	for _, character := range value {
+		width := utf16.RuneLen(character)
+		if width < 1 {
+			width = 1
+		}
+		if units+width > maximumUTF16Units {
+			break
+		}
+		bounded.WriteRune(character)
+		units += width
+	}
+	return strings.TrimSpace(bounded.String())
 }
 
 func integrityRules(result decision) []string {
