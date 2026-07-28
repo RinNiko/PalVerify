@@ -269,8 +269,8 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.22"' `
-    "launcher must use the stable UE4SS parent digest revision"
+Require-Text $launcherSource 'launcher_version = "1.0.23"' `
+    "launcher must ship the kick-reason client update"
 Require-Text $launcherSource 'palworld_is_running()' `
     "launcher must detect a running Palworld process before installing mods"
 Require-Text $launcherSource 'waiting_for_game_exit' `
@@ -285,15 +285,15 @@ Require-Text $launcherSource `
 Require-Text $launcherSource `
     'WinHttpSetTimeouts(session, 10000, 10000, 20000, 20000)' `
     "launcher manifest request must tolerate slow GitHub connections"
-Require-Text $launcherSource 'palverify_version = "1.0.13"' `
-    "launcher must bundle PalVerify verifier version 1.0.13"
+Require-Text $launcherSource 'palverify_version = "1.0.14"' `
+    "launcher must bundle PalVerify verifier version 1.0.14"
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.22"' `
-    "stable manifest must trigger the stable UE4SS parent digest update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.22"' `
-    "stable manifest must require the stable UE4SS parent digest revision"
+Require-Text $releaseManifest '"launcherVersion": "1.0.23"' `
+    "stable manifest must trigger the kick-reason client update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.23"' `
+    "stable manifest must require the kick-reason client update"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
 Require-Text $launcherSource `
@@ -325,10 +325,10 @@ Require-NoText $launcherSource 'steam://run/1623730' `
     "launcher must not auto-join a server through Steam"
 Require-NoText $launcherSource 'launch_steam_with_auto_join' `
     "launcher must not retain the auto-join launch path"
-Require-Text $packageInfo '"Version": "1.0.13"' `
-    "PalVerify package metadata must expose verifier version 1.0.13"
-Require-Text $clientAgentSource 'CLIENT_STARTED protocol=3 version=1.0.13' `
-    "client runtime log must expose verifier version 1.0.13"
+Require-Text $packageInfo '"Version": "1.0.14"' `
+    "PalVerify package metadata must expose verifier version 1.0.14"
+Require-Text $clientAgentSource 'CLIENT_STARTED protocol=3 version=1.0.14' `
+    "client runtime log must expose verifier version 1.0.14"
 Require-NoText $clientProbe 'PalVerifyClient.exe' `
     "client Lua must not launch duplicate PalVerifyClient processes"
 Require-NoText $clientProbe 'os.execute' `

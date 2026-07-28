@@ -1,5 +1,11 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.23 và client PalVerify v1.0.14 hiển thị hộp thoại
+  tiếng Việt nêu rõ lý do, mã lỗi, chi tiết an toàn và cách xử lý trước khi
+  server kick. Heartbeat runtime nhận cùng quyết định policy với evaluator;
+  client mới vẫn tương thích coordinator cũ trả body rỗng và client cũ vẫn
+  bỏ qua body JSON mới. Refresh inventory/hash mỗi phút chạy trên background
+  worker để heartbeat 5 giây không bị chặn bởi disk I/O.
 - Launcher nội bộ v1.0.22 và client PalVerify v1.0.13 tách cache
   `UE4SSExperimentalPW\Mods\PalVerify` khỏi digest package cha. Cache này vẫn
   được xác minh qua package `PalVerify` riêng, còn UE4SS core vẫn đổi digest
