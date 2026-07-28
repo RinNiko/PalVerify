@@ -7,12 +7,16 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <condition_variable>
 #include <cstddef>
 #include <cwctype>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iterator>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <ranges>
 #include <regex>
@@ -22,6 +26,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 namespace palverify {
@@ -726,6 +731,137 @@ auto scan_mod_inventory(const std::filesystem::path& game_root)
     return inventory;
 }
 
+struct AsyncModInventory::State {
+    State(
+        std::filesystem::path root,
+        std::vector<ReportedMod> initial,
+        ModInventoryScan scan_function
+    )
+        : game_root{std::move(root)},
+          inventory{std::move(initial)},
+          scan{std::move(scan_function)}
+    {
+        if (!scan) {
+            scan = scan_mod_inventory;
+        }
+        worker = std::thread{[this] {
+            run();
+        }};
+    }
+
+    ~State()
+    {
+        {
+            const std::scoped_lock lock{mutex};
+            stopping = true;
+        }
+        condition.notify_one();
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+
+    void run()
+    {
+        while (true) {
+            {
+                std::unique_lock lock{mutex};
+                condition.wait(lock, [this] {
+                    return stopping || refresh_requested;
+                });
+                if (stopping) {
+                    return;
+                }
+                refresh_requested = false;
+                refresh_running = true;
+            }
+
+            const auto background_mode = SetThreadPriority(
+                GetCurrentThread(),
+                THREAD_MODE_BACKGROUND_BEGIN
+            ) != FALSE;
+            std::optional<std::vector<ReportedMod>> refreshed;
+            try {
+                refreshed = scan(game_root);
+            } catch (const std::exception&) {
+            }
+            if (background_mode) {
+                SetThreadPriority(
+                    GetCurrentThread(),
+                    THREAD_MODE_BACKGROUND_END
+                );
+            }
+
+            {
+                const std::scoped_lock lock{mutex};
+                if (refreshed.has_value()) {
+                    inventory = std::move(*refreshed);
+                    last_refresh_failed = false;
+                } else {
+                    last_refresh_failed = true;
+                }
+                refresh_running = false;
+            }
+        }
+    }
+
+    std::filesystem::path game_root;
+    std::vector<ReportedMod> inventory;
+    ModInventoryScan scan;
+    mutable std::mutex mutex;
+    std::condition_variable condition;
+    std::thread worker;
+    bool stopping{};
+    bool refresh_requested{};
+    bool refresh_running{};
+    bool last_refresh_failed{};
+};
+
+AsyncModInventory::AsyncModInventory(
+    std::filesystem::path game_root,
+    std::vector<ReportedMod> initial,
+    ModInventoryScan scan
+)
+    : state_{std::make_unique<State>(
+          std::move(game_root),
+          std::move(initial),
+          std::move(scan)
+      )}
+{
+}
+
+AsyncModInventory::~AsyncModInventory() = default;
+
+void AsyncModInventory::request_refresh()
+{
+    {
+        const std::scoped_lock lock{state_->mutex};
+        if (state_->refresh_running || state_->refresh_requested) {
+            return;
+        }
+        state_->refresh_requested = true;
+    }
+    state_->condition.notify_one();
+}
+
+auto AsyncModInventory::snapshot() const -> std::vector<ReportedMod>
+{
+    const std::scoped_lock lock{state_->mutex};
+    return state_->inventory;
+}
+
+auto AsyncModInventory::refresh_in_progress() const -> bool
+{
+    const std::scoped_lock lock{state_->mutex};
+    return state_->refresh_running || state_->refresh_requested;
+}
+
+auto AsyncModInventory::refresh_failed() const -> bool
+{
+    const std::scoped_lock lock{state_->mutex};
+    return state_->last_refresh_failed;
+}
+
 void append_integrity_evidence_json(
     std::string& output,
     std::span<const IntegrityEvidence> evidence
@@ -874,6 +1010,55 @@ auto format_runtime_integrity_message(
     message +=
         "\r\n\r\nHãy tắt phần mềm liên quan, thoát hẳn Palworld "
         "rồi mở lại bằng launcher.";
+    return message;
+}
+
+auto format_policy_rejection_message(
+    const ClientPreflightResponse& response
+) -> std::string
+{
+    if (response.accepted) {
+        return {};
+    }
+
+    std::string explanation;
+    std::string recovery;
+    if (response.reason == "UNAPPROVED_MOD") {
+        explanation =
+            "Phát hiện mod không được máy chủ chấp thuận hoặc sai phiên bản.";
+        recovery =
+            "Hãy cập nhật PalVerify và các mod bằng launcher, sau đó mở lại "
+            "Palworld.";
+    } else if (response.reason == "INTEGRITY_VIOLATION") {
+        explanation =
+            "Phát hiện phần mềm hoặc tệp đang can thiệp vào Palworld.";
+        recovery =
+            "Hãy tắt phần mềm liên quan, thoát hẳn Palworld rồi mở lại bằng "
+            "launcher.";
+    } else if (response.reason == "MISSING_PALVERIFY") {
+        explanation =
+            "PalVerifyClient.exe không gửi heartbeat đúng thời hạn.";
+        recovery =
+            "Hãy thoát hẳn Palworld rồi mở lại bằng launcher để khởi động "
+            "PalVerifyClient.exe.";
+    } else {
+        explanation = "Phiên xác minh không đạt yêu cầu của máy chủ.";
+        recovery =
+            "Hãy thoát hẳn Palworld, cập nhật bằng launcher rồi thử lại.";
+    }
+
+    std::string message{
+        "PalVerify sắp ngắt kết nối để bảo vệ máy chủ.\r\n\r\nLý do: "
+    };
+    message += explanation;
+    message += "\r\nMã lỗi: ";
+    message += response.reason;
+    if (!response.detail.empty()) {
+        message += "\r\nChi tiết: ";
+        message += response.detail;
+    }
+    message += "\r\n\r\nCách xử lý: ";
+    message += recovery;
     return message;
 }
 

@@ -583,6 +583,26 @@ void show_runtime_integrity_alert(
     }).detach();
 }
 
+void show_policy_rejection_alert(
+    const palverify::ClientPreflightResponse& response
+)
+{
+    const auto message = utf8_to_wide(
+        palverify::format_policy_rejection_message(response)
+    );
+    if (!message.has_value() || message->empty()) {
+        return;
+    }
+    std::thread([message = *message] {
+        MessageBoxW(
+            nullptr,
+            message.c_str(),
+            L"PalVerify - Lý do ngắt kết nối",
+            MB_OK | MB_ICONERROR | MB_TOPMOST
+        );
+    }).detach();
+}
+
 [[nodiscard]] auto finish_preflight(
     std::ofstream& log,
     palverify::ClientPreflightExit exit_code,
@@ -812,10 +832,10 @@ auto wmain(int argc, wchar_t** argv) -> int
         module_directory() / "ui-queue",
         config->website
     );
-    auto inventory = palverify::scan_mod_inventory(*game_root);
+    auto initial_inventory = palverify::scan_mod_inventory(*game_root);
     {
         std::string ids;
-        for (const auto& mod : inventory) {
+        for (const auto& mod : initial_inventory) {
             if (!ids.empty()) {
                 ids.push_back(',');
             }
@@ -823,11 +843,17 @@ auto wmain(int argc, wchar_t** argv) -> int
         }
         write_event(log, "MOD_INVENTORY ids=" + ids);
     }
+    palverify::AsyncModInventory inventory{
+        *game_root,
+        std::move(initial_inventory),
+    };
 
     std::uint64_t sequence = 0;
     auto next_inventory_refresh = std::chrono::steady_clock::now()
         + std::chrono::minutes{1};
     bool integrity_alert_shown = false;
+    bool policy_rejection_alert_shown = false;
+    bool inventory_failure_logged = false;
     while (true) {
         if (!palworld_is_running()) {
             write_event(log, "CLIENT_STOPPED reason=game-exited");
@@ -855,6 +881,15 @@ auto wmain(int argc, wchar_t** argv) -> int
                 violation_evidence
             );
         }
+        if (inventory.refresh_failed()) {
+            violations.emplace_back("MOD_SCAN_UNAVAILABLE");
+            if (!inventory_failure_logged) {
+                inventory_failure_logged = true;
+                write_event(log, "MOD_SCAN_UNAVAILABLE");
+            }
+        } else {
+            inventory_failure_logged = false;
+        }
         if (!violations.empty()) {
             write_event(
                 log,
@@ -871,7 +906,7 @@ auto wmain(int argc, wchar_t** argv) -> int
 
         const auto now = std::chrono::steady_clock::now();
         if (now >= next_inventory_refresh) {
-            inventory = palverify::scan_mod_inventory(*game_root);
+            inventory.request_refresh();
             next_inventory_refresh = now + std::chrono::minutes{1};
         }
         const auto wall_clock_milliseconds =
@@ -918,7 +953,7 @@ auto wmain(int argc, wchar_t** argv) -> int
             .challenge = *challenge,
             .sequence = sequence,
             .sent_at = utc_timestamp(),
-            .mods = inventory,
+            .mods = inventory.snapshot(),
             .violations = std::move(violations),
             .violation_evidence = std::move(violation_evidence),
         });
@@ -934,11 +969,36 @@ auto wmain(int argc, wchar_t** argv) -> int
                 "REPORT_FAILED status="
                     + std::to_string(response->status)
             );
-        } else {
+        } else if (response->body.empty()) {
             write_event(
                 log,
                 "REPORT_ACCEPTED sequence=" + std::to_string(sequence)
             );
+        } else if (const auto decision =
+                       palverify::parse_client_preflight_response(
+                           response->body
+                       );
+                   !decision.has_value()) {
+            write_event(log, "REPORT_FAILED reason=invalid-response");
+        } else if (decision->accepted) {
+            write_event(
+                log,
+                "REPORT_ACCEPTED sequence=" + std::to_string(sequence)
+            );
+        } else {
+            write_event(
+                log,
+                "REPORT_REJECTED reason=" + decision->reason
+                    + " detail=" + decision->detail
+            );
+            const auto integrity_alert_already_shown =
+                decision->reason == "INTEGRITY_VIOLATION"
+                && integrity_alert_shown;
+            if (!policy_rejection_alert_shown
+                && !integrity_alert_already_shown) {
+                policy_rejection_alert_shown = true;
+                show_policy_rejection_alert(*decision);
+            }
         }
         std::this_thread::sleep_for(std::chrono::seconds{5});
     }

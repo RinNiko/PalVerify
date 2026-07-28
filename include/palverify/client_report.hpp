@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -100,12 +102,42 @@ struct ClientUiCommand {
     const std::filesystem::path& game_root
 ) -> std::vector<ReportedMod>;
 
+using ModInventoryScan = std::function<std::vector<ReportedMod>(
+    const std::filesystem::path&
+)>;
+
+class AsyncModInventory final {
+public:
+    AsyncModInventory(
+        std::filesystem::path game_root,
+        std::vector<ReportedMod> initial,
+        ModInventoryScan scan = {}
+    );
+    ~AsyncModInventory();
+
+    AsyncModInventory(const AsyncModInventory&) = delete;
+    auto operator=(const AsyncModInventory&) -> AsyncModInventory& = delete;
+
+    void request_refresh();
+    [[nodiscard]] auto snapshot() const -> std::vector<ReportedMod>;
+    [[nodiscard]] auto refresh_in_progress() const -> bool;
+    [[nodiscard]] auto refresh_failed() const -> bool;
+
+private:
+    struct State;
+    std::unique_ptr<State> state_;
+};
+
 [[nodiscard]] auto build_client_report_json(const ClientReport& report)
     -> std::string;
 
 [[nodiscard]] auto format_runtime_integrity_message(
     std::span<const std::string> violations,
     std::span<const IntegrityEvidence> evidence
+) -> std::string;
+
+[[nodiscard]] auto format_policy_rejection_message(
+    const ClientPreflightResponse& response
 ) -> std::string;
 
 [[nodiscard]] auto build_client_preflight_json(

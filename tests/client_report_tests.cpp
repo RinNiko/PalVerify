@@ -1,12 +1,16 @@
 #include "palverify/client_report.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -296,6 +300,110 @@ void managed_palverify_cache_does_not_change_ue4ss_parent_digest()
     std::filesystem::remove_all(root, ignored);
 }
 
+void runtime_inventory_refresh_does_not_block_heartbeat_snapshot()
+{
+    using namespace std::chrono_literals;
+
+    const std::vector<palverify::ReportedMod> initial{{
+        .id = "PalVerify",
+        .version = "1.0.13",
+        .digest = std::string(64, 'a'),
+    }};
+    const std::vector<palverify::ReportedMod> refreshed{{
+        .id = "PalVerify",
+        .version = "1.0.13",
+        .digest = std::string(64, 'b'),
+    }};
+
+    std::promise<void> scan_started;
+    auto scan_started_future = scan_started.get_future();
+    std::promise<void> release_scan;
+    auto release_scan_future = release_scan.get_future().share();
+    std::atomic<unsigned int> scans{0};
+
+    palverify::AsyncModInventory inventory{
+        {},
+        initial,
+        [&](const std::filesystem::path&) {
+            ++scans;
+            scan_started.set_value();
+            release_scan_future.wait();
+            return refreshed;
+        },
+    };
+    inventory.request_refresh();
+    require(
+        scan_started_future.wait_for(2s) == std::future_status::ready,
+        "background inventory scan must start"
+    );
+
+    const auto snapshot_started = std::chrono::steady_clock::now();
+    const auto during_scan = inventory.snapshot();
+    const auto snapshot_elapsed =
+        std::chrono::steady_clock::now() - snapshot_started;
+    require(
+        snapshot_elapsed < 100ms,
+        "heartbeat snapshot must not wait for mod hashing"
+    );
+    require_equal(
+        during_scan.front().digest,
+        initial.front().digest,
+        "last complete inventory must remain available while scanning"
+    );
+
+    release_scan.set_value();
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (inventory.refresh_in_progress()
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(1ms);
+    }
+    require(
+        !inventory.refresh_in_progress(),
+        "background inventory scan must complete"
+    );
+    require_equal(scans.load(), 1U, "one refresh request must run one scan");
+    require_equal(
+        inventory.snapshot().front().digest,
+        refreshed.front().digest,
+        "completed inventory must replace the previous snapshot"
+    );
+}
+
+void failed_inventory_refresh_is_fail_closed()
+{
+    using namespace std::chrono_literals;
+
+    const std::vector<palverify::ReportedMod> initial{{
+        .id = "PalVerify",
+        .version = "1.0.13",
+        .digest = std::string(64, 'a'),
+    }};
+    palverify::AsyncModInventory inventory{
+        {},
+        initial,
+        [](const std::filesystem::path&)
+            -> std::vector<palverify::ReportedMod> {
+            throw std::runtime_error{"scan failed"};
+        },
+    };
+
+    inventory.request_refresh();
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (inventory.refresh_in_progress()
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(1ms);
+    }
+    require(
+        inventory.refresh_failed(),
+        "failed background scan must be visible to heartbeat enforcement"
+    );
+    require_equal(
+        inventory.snapshot().front().digest,
+        initial.front().digest,
+        "failed scan must not publish a partial inventory"
+    );
+}
+
 void report_json_contains_only_compact_policy_fields()
 {
     const palverify::ClientReport report{
@@ -496,6 +604,35 @@ void preflight_response_requires_bounded_safe_codes()
          )
              .has_value(),
         "unsafe or path-bearing response must be rejected"
+    );
+}
+
+void runtime_policy_rejection_explains_the_kick_to_the_player()
+{
+    const auto mod_message = palverify::format_policy_rejection_message({
+        .accepted = false,
+        .reason = "UNAPPROVED_MOD",
+        .detail = "PalVerify:VERSION_MISMATCH",
+    });
+    require(
+        mod_message.find("mod không được máy chủ chấp thuận")
+                != std::string::npos
+            && mod_message.find("PalVerify:VERSION_MISMATCH")
+                != std::string::npos
+            && mod_message.find("cập nhật") != std::string::npos,
+        "unapproved-mod alert must explain both the cause and recovery"
+    );
+
+    const auto missing_message = palverify::format_policy_rejection_message({
+        .accepted = false,
+        .reason = "MISSING_PALVERIFY",
+        .detail = "STALE_REPORT",
+    });
+    require(
+        missing_message.find("heartbeat") != std::string::npos
+            && missing_message.find("PalVerifyClient.exe")
+                != std::string::npos,
+        "missing-client alert must explain the heartbeat timeout"
     );
 }
 
@@ -712,6 +849,14 @@ auto main() -> int
             managed_palverify_cache_does_not_change_ue4ss_parent_digest,
         },
         {
+            "runtime inventory refresh stays off heartbeat thread",
+            runtime_inventory_refresh_does_not_block_heartbeat_snapshot,
+        },
+        {
+            "failed runtime inventory refresh is fail closed",
+            failed_inventory_refresh_is_fail_closed,
+        },
+        {
             "report JSON stays compact",
             report_json_contains_only_compact_policy_fields,
         },
@@ -726,6 +871,10 @@ auto main() -> int
         {
             "preflight response codes stay safe",
             preflight_response_requires_bounded_safe_codes,
+        },
+        {
+            "runtime policy rejection explains kick reason",
+            runtime_policy_rejection_explains_the_kick_to_the_player,
         },
         {
             "client config requires secure transport",

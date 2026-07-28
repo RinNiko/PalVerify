@@ -505,6 +505,74 @@ func TestHTTPHandlerUsesSessionChallengeAndProtectsServerCredential(t *testing.T
 	}
 }
 
+func TestHTTPReportReturnsPlayerFacingPolicyDecision(t *testing.T) {
+	now := time.Date(2026, 7, 28, 9, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+		AllowedMods: map[string]AllowedMod{
+			"PalVerify": {
+				Version: "1.0.13",
+				Digest:  strings.Repeat("a", 64),
+			},
+		},
+	})
+	handler := NewHandler(
+		store,
+		"server-token",
+		func() time.Time { return now },
+		nil,
+	)
+	userID := "steam_76561198317031083"
+	store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: userID,
+		Name:   "Bao",
+	}}, now)
+	challenge, err := store.IssueChallenge("bnb", userID, now)
+	if err != nil {
+		t.Fatalf("issue challenge: %v", err)
+	}
+	body, err := json.Marshal(Report{
+		ServerID:        "bnb",
+		UserID:          userID,
+		ProtocolVersion: "3",
+		Challenge:       challenge,
+		Sequence:        1,
+		SentAt:          now,
+		Mods: []ReportedMod{{
+			ID:      "PalVerify",
+			Version: "1.0.12",
+			Digest:  strings.Repeat("b", 64),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("encode report: %v", err)
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/client/report",
+		strings.NewReader(string(body)),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("report status: %d", response.Code)
+	}
+
+	var decision PreflightDecision
+	if err := json.NewDecoder(response.Body).Decode(&decision); err != nil {
+		t.Fatalf("decode report policy decision: %v", err)
+	}
+	if decision.Accepted ||
+		decision.Reason != "UNAPPROVED_MOD" ||
+		!strings.Contains(decision.Detail, "PalVerify:VERSION_MISMATCH") ||
+		len(decision.Mods) != 1 ||
+		decision.Mods[0] != "PalVerify" {
+		t.Fatalf("unexpected report policy decision: %#v", decision)
+	}
+}
+
 func TestHTTPHandlerAcceptsUnicodePlayerNamesForEvaluation(t *testing.T) {
 	now := time.Date(2026, 7, 27, 10, 30, 0, 0, time.UTC)
 	store := NewStore(Config{

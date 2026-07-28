@@ -933,6 +933,28 @@ func NewHandlerWithAudit(
 			http.Error(response, err.Error(), http.StatusBadRequest)
 			return
 		}
+		decision, err := store.EvaluatePreflight(ClientPreflight{
+			ServerID:          report.ServerID,
+			ProtocolVersion:   report.ProtocolVersion,
+			Mods:              report.Mods,
+			Violations:        report.Violations,
+			ViolationEvidence: report.ViolationEvidence,
+		})
+		if err != nil {
+			if logger != nil {
+				logger.Printf(
+					"report policy evaluation failed user=%s reason=%q",
+					compactUserID(report.UserID),
+					err.Error(),
+				)
+			}
+			http.Error(
+				response,
+				"report policy evaluation failed",
+				http.StatusInternalServerError,
+			)
+			return
+		}
 		if logger != nil {
 			modIDs := make([]string, 0, len(report.Mods))
 			for _, mod := range report.Mods {
@@ -968,7 +990,12 @@ func NewHandlerWithAudit(
 				),
 			})
 		}
+		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusAccepted)
+		if err := json.NewEncoder(response).Encode(decision); err != nil &&
+			logger != nil {
+			logger.Printf("encode report policy response: %v", err)
+		}
 	})
 	mux.HandleFunc("POST /v1/server/evaluate", func(
 		response http.ResponseWriter,
