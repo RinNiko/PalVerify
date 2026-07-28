@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.2"
+local VERSION = "1.4.3"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -59,7 +59,6 @@ local discovery_complete = false
 local next_discovery_at = 0
 local next_runtime_reload_at = 0
 local next_server_delivery_at = 0
-local pal_utility = nil
 local protocol_message_type = nil
 local controllers = {}
 local render_failure_logged = false
@@ -1041,47 +1040,46 @@ local function player_state(entry)
     return nil
 end
 
-local function player_user_id(entry)
-    local state = player_state(entry)
-    if state == nil then
-        return nil
-    end
-    local unique_ok, unique_id = call_method(state, "BP_GetUniqueId")
-    if not unique_ok or unique_id == nil then
-        return nil
-    end
-    local text_ok, user_id = call_method(
-        pal_utility,
-        "GetPlayerUniqueIdToString",
-        unique_id
-    )
-    if not text_ok then
-        return nil
-    end
-    local normalized = as_text(user_id)
-    if normalized == "" then
-        return nil
-    end
-    return normalized
+local function normalized_player_name(value)
+    local name = as_text(value)
+    name = name:gsub("[%c|]", " "):gsub("%s+", " ")
+    name = name:match("^%s*(.-)%s*$") or ""
+    return name:lower()
 end
 
-local function player_uid(entry)
+local function player_name(entry)
     local state = player_state(entry)
     if state == nil then
         return nil
     end
-    local guid = read_member(state, "PlayerUId")
-    if guid == nil then
+    local name_ok, name = call_method(state, "GetPlayerName")
+    if not name_ok then
         return nil
     end
-    local a = read_member(guid, "A")
-    local b = read_member(guid, "B")
-    local c = read_member(guid, "C")
-    local d = read_member(guid, "D")
-    if a == nil or b == nil or c == nil or d == nil then
+    name = as_text(name):match("^%s*(.-)%s*$") or ""
+    if name == "" then
         return nil
     end
-    return { A = a, B = b, C = c, D = d }
+    return name
+end
+
+local function runtime_status_for_player_name(name)
+    local normalized = normalized_player_name(name)
+    if normalized == "" or type(runtime.hud_players) ~= "table" then
+        return nil
+    end
+    local match = nil
+    for _, status in pairs(runtime.hud_players) do
+        if type(status) == "table"
+            and normalized_player_name(status.player_name) == normalized
+        then
+            if match ~= nil then
+                return nil
+            end
+            match = status
+        end
+    end
+    return match
 end
 
 format_multiplier = function(value)
@@ -1209,17 +1207,24 @@ local function update_hud()
         if not is_valid(entry.controller) or not is_valid(entry.player) then
             table.insert(invalid, key)
         else
+            local name = player_name(entry)
             local status = nil
             if active then
-                local user_id = player_user_id(entry)
-                status = user_id ~= nil
-                    and runtime.hud_players[user_id]
-                    or nil
+                status = runtime_status_for_player_name(name)
+            end
+            local syncing = not active or status == nil
+            if status == nil then
+                status = {
+                    player_name = name,
+                    multiplier = 1,
+                    sources = {},
+                    gacha_spins = -1,
+                }
             end
             local sent, failure_reason = send_protocol(
                 entry,
                 status,
-                not active
+                syncing
             )
             if sent and not delivery_started_logged then
                 delivery_started_logged = true
@@ -1294,7 +1299,7 @@ local function start()
         "/Script/Pal.PalPlayerCharacter:GetPalPlayerController",
         "/Script/Pal.PalPlayerCharacter:GetCachedPlayerState",
         "/Script/Pal.PalPlayerController:GetPalPlayerState",
-        "/Script/Pal.PalUtility:GetPlayerUniqueIdToString",
+        "/Script/Engine.PlayerState:GetPlayerName",
         CONTROLLER_POSSESS_PATH,
         CHAT_PATH,
     }
@@ -1305,11 +1310,6 @@ local function start()
         end
     end
 
-    pal_utility = find_required_object("/Script/Pal.Default__PalUtility")
-    if pal_utility == nil then
-        log("ERROR", "PalHud disabled because runtime helpers are unavailable.")
-        return
-    end
     protocol_message_type = new_object_name("PalHud")
 
     Callbacks.empty_pre_hook = Callbacks.empty_pre_hook or function() end
