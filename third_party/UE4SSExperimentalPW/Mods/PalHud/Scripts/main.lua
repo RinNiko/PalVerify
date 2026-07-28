@@ -1,11 +1,12 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.1"
+local VERSION = "1.4.2"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
 local PROTOCOL_PREFIX = "[PALHUD]|"
 local CONTROLLER_POSSESS_PATH = "/Script/Engine.Controller:Possess"
 local CHAT_PATH = "/Script/Pal.PalGameStateInGame:BroadcastChatMessage"
+local CLIENT_MESSAGE_PATH = "/Script/Engine.PlayerController:ClientMessage"
 local USER_WIDGET_CLASS_PATH = "/Script/UMG.UserWidget"
 local WIDGET_TREE_CLASS_PATH = "/Script/UMG.WidgetTree"
 local TEXT_BLOCK_CLASS_PATH = "/Script/UMG.TextBlock"
@@ -59,6 +60,7 @@ local next_discovery_at = 0
 local next_runtime_reload_at = 0
 local next_server_delivery_at = 0
 local pal_utility = nil
+local protocol_message_type = nil
 local controllers = {}
 local render_failure_logged = false
 local protocol_received_logged = false
@@ -791,6 +793,87 @@ local function booster_view(status, now)
     }
 end
 
+local function render_protocol(raw_message)
+    local boosted_flag,
+        active_since,
+        active_until,
+        multiplier,
+        capped_flag,
+        gacha_spins,
+        player_name,
+        sources = raw_message:match(
+            "^%[PALHUD%]|([012])|(%d+)|(%d+)|([^|]*)|([01])|"
+                .. "(%-?%d+)|([^|]*)|(.*)$"
+        )
+    if boosted_flag == nil then
+        return false
+    end
+    local status = nil
+    if boosted_flag == "1" then
+        status = {
+            multiplier = tonumber(multiplier),
+            sources = sources,
+            capped = capped_flag == "1",
+            active_since_unix = tonumber(active_since),
+            active_until_unix = tonumber(active_until),
+            gacha_spins = tonumber(gacha_spins),
+            player_name = player_name,
+        }
+    elseif boosted_flag == "0" then
+        status = {
+            multiplier = 1,
+            sources = {},
+            capped = false,
+            active_since_unix = 0,
+            active_until_unix = 0,
+            gacha_spins = tonumber(gacha_spins),
+            player_name = player_name,
+        }
+    end
+    local view = boosted_flag == "2"
+        and inactive_view(
+            true,
+            player_name,
+            tonumber(gacha_spins)
+        )
+        or booster_view(status, os.time())
+    if not protocol_received_logged then
+        protocol_received_logged = true
+        log("INFO", "Client protocol received.")
+    end
+    local rendered = render_client_hud(view)
+    if rendered and not render_started_logged then
+        render_started_logged = true
+        log("INFO", "Client HUD render started.")
+    end
+    return true
+end
+
+local function on_client_message(
+    controller_context,
+    message_param,
+    message_type_param,
+    duration_param
+)
+    local ok, error_message = pcall(function()
+        local controller = unwrap(controller_context)
+        local local_ok, is_local = call_method(
+            controller,
+            "IsLocalPlayerController"
+        )
+        if not local_ok or is_local ~= true then
+            return
+        end
+        render_protocol(as_text(message_param))
+    end)
+    if not ok then
+        log(
+            "ERROR",
+            "Client protocol handler failed: " .. tostring(error_message)
+        )
+    end
+end
+
 local function on_chat(game_state_context, chat_message_param)
     local ok, error_message = pcall(function()
         local message_object = unwrap(chat_message_param)
@@ -800,69 +883,17 @@ local function on_chat(game_state_context, chat_message_param)
         if as_text(read_member(message_object, "Sender")):upper() ~= "SYSTEM" then
             return
         end
-        local raw_message = as_text(read_member(message_object, "Message"))
-        local boosted_flag,
-            active_since,
-            active_until,
-            multiplier,
-            capped_flag,
-            gacha_spins,
-            player_name,
-            sources = raw_message:match(
-                "^%[PALHUD%]|([012])|(%d+)|(%d+)|([^|]*)|([01])|"
-                    .. "(%-?%d+)|([^|]*)|(.*)$"
-            )
-        if boosted_flag == nil then
-            return
-        end
         if find_local_player_controller() == nil then
             return
         end
-        local status = nil
-        if boosted_flag == "1" then
-            status = {
-                multiplier = tonumber(multiplier),
-                sources = sources,
-                capped = capped_flag == "1",
-                active_since_unix = tonumber(active_since),
-                active_until_unix = tonumber(active_until),
-                gacha_spins = tonumber(gacha_spins),
-                player_name = player_name,
-            }
-        elseif boosted_flag == "0" then
-            status = {
-                multiplier = 1,
-                sources = {},
-                capped = false,
-                active_since_unix = 0,
-                active_until_unix = 0,
-                gacha_spins = tonumber(gacha_spins),
-                player_name = player_name,
-            }
-        end
-        local view = boosted_flag == "2"
-            and inactive_view(
-                true,
-                player_name,
-                tonumber(gacha_spins)
-            )
-            or booster_view(status, os.time())
-        if not protocol_received_logged then
-            protocol_received_logged = true
-            log("INFO", "Client protocol received.")
-        end
-        local message_field = read_member(message_object, "Message")
-        call_method(message_field, "Clear")
-        local rendered = render_client_hud(view)
-        if rendered and not render_started_logged then
-            render_started_logged = true
-            log("INFO", "Client HUD render started.")
+        if render_protocol(as_text(read_member(message_object, "Message"))) then
+            call_method(read_member(message_object, "Message"), "Clear")
         end
     end)
     if not ok then
         log(
             "ERROR",
-            "Client protocol handler failed: " .. tostring(error_message)
+            "Legacy chat protocol handler failed: " .. tostring(error_message)
         )
     end
 end
@@ -1084,12 +1115,8 @@ local function protocol_sources(status)
 end
 
 local function send_protocol(entry, status, syncing)
-    local uid = player_uid(entry)
-    if not is_valid(entry.player) then
-        return false, "player_unavailable"
-    end
-    if uid == nil then
-        return false, "uid_unavailable"
+    if not is_valid(entry.controller) then
+        return false, "controller_unavailable"
     end
     local boosted = type(status) == "table"
         and tonumber(status.multiplier) ~= nil
@@ -1129,11 +1156,11 @@ local function send_protocol(entry, status, syncing)
         .. "|"
         .. safe_protocol_text(protocol_sources(status))
     local sent = call_method(
-        pal_utility,
-        "SendSystemToPlayerChat",
-        entry.player,
+        entry.controller,
+        "ClientMessage",
         protocol_message,
-        { uid }
+        protocol_message_type,
+        0
     )
     if not sent then
         return false, "rpc_call_failed"
@@ -1197,7 +1224,7 @@ local function update_hud()
             if sent and not delivery_started_logged then
                 delivery_started_logged = true
                 last_delivery_failure_reason = nil
-                log("INFO", "HUD delivery started via targeted system chat.")
+                log("INFO", "HUD delivery started via targeted ClientMessage.")
             elseif not sent
                 and failure_reason ~= last_delivery_failure_reason
             then
@@ -1263,7 +1290,7 @@ local function start()
     started = true
 
     local required_functions = {
-        "/Script/Pal.PalUtility:SendSystemToPlayerChat",
+        CLIENT_MESSAGE_PATH,
         "/Script/Pal.PalPlayerCharacter:GetPalPlayerController",
         "/Script/Pal.PalPlayerCharacter:GetCachedPlayerState",
         "/Script/Pal.PalPlayerController:GetPalPlayerState",
@@ -1283,9 +1310,11 @@ local function start()
         log("ERROR", "PalHud disabled because runtime helpers are unavailable.")
         return
     end
+    protocol_message_type = new_object_name("PalHud")
 
     Callbacks.empty_pre_hook = Callbacks.empty_pre_hook or function() end
     Callbacks.on_chat = on_chat
+    Callbacks.on_client_message = on_client_message
     Callbacks.on_possess = function(controller, pawn)
         local player = unwrap(pawn)
         if not is_valid(player) then
@@ -1308,17 +1337,27 @@ local function start()
         Callbacks.empty_pre_hook,
         Callbacks.on_chat
     )
+    local client_message_ok, client_message_error = pcall(
+        RegisterHook,
+        CLIENT_MESSAGE_PATH,
+        Callbacks.empty_pre_hook,
+        Callbacks.on_client_message
+    )
     local possess_ok, possess_error = pcall(
         RegisterHook,
         CONTROLLER_POSSESS_PATH,
         Callbacks.empty_pre_hook,
         Callbacks.on_possess
     )
-    if not chat_ok or not possess_ok then
+    if not chat_ok or not client_message_ok or not possess_ok then
         log(
             "ERROR",
             "PalHud hook registration failed: "
-                .. tostring(chat_error or possess_error)
+                .. tostring(
+                    chat_error
+                        or client_message_error
+                        or possess_error
+                )
         )
         return
     end

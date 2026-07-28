@@ -1,5 +1,8 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.26 cập nhật PalHud v1.4.2: protocol HUD chuyển sang
+  targeted `ClientMessage` RPC, không còn đi qua
+  `PalUtility.SendSystemToPlayerChat` và PalDefender chat transport.
 - Launcher nội bộ v1.0.25 cập nhật PalHud v1.4.1: vòng HUD dùng
   `LoopAsync` và chỉ xếp tối đa một callback game-thread, đồng thời dedicated
   server không còn sửa protocol chat outbound hoặc thử dựng UMG.
