@@ -278,7 +278,7 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.24"' `
+Require-Text $launcherSource 'launcher_version = "1.0.25"' `
     "launcher must ship the managed PalHud payload revision"
 Require-Text $launcherSource 'palworld_is_running()' `
     "launcher must detect a running Palworld process before installing mods"
@@ -299,9 +299,9 @@ Require-Text $launcherSource 'palverify_version = "1.0.14"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.24"' `
+Require-Text $releaseManifest '"launcherVersion": "1.0.25"' `
     "stable manifest must trigger the managed PalHud payload update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.24"' `
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.25"' `
     "stable manifest must require the managed PalHud payload revision"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"

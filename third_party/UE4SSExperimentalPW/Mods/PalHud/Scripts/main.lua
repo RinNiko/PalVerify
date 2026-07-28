@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.0"
+local VERSION = "1.4.1"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -33,6 +33,8 @@ local PLAYER_CLASS_NAMES = {
     "BP_Player_Female_C",
     "BP_Player_Male_C",
 }
+PalHudCallbacks = PalHudCallbacks or {}
+local Callbacks = PalHudCallbacks
 
 local function script_directory()
     local info =
@@ -68,6 +70,8 @@ local local_preview_render_logged = false
 local last_local_preview_failure = nil
 local hud_visible = true
 local visibility_update_pending = false
+local hud_tick_pending = false
+local hud_tick_queued_at = 0
 local hud_overlay = nil
 local hud_player_block = nil
 local hud_gacha_block = nil
@@ -254,7 +258,13 @@ local function find_local_player_controller()
             "GetOwningPlayer"
         )
         if owner_ok and is_valid(owner) then
-            return owner
+            local local_ok, is_local = call_method(
+                owner,
+                "IsLocalPlayerController"
+            )
+            if local_ok and is_local == true then
+                return owner
+            end
         end
     end
 
@@ -805,6 +815,9 @@ local function on_chat(game_state_context, chat_message_param)
         if boosted_flag == nil then
             return
         end
+        if find_local_player_controller() == nil then
+            return
+        end
         local status = nil
         if boosted_flag == "1" then
             status = {
@@ -1201,6 +1214,48 @@ local function update_hud()
     end
 end
 
+Callbacks.game_thread_hud_tick = function()
+    hud_tick_pending = false
+    hud_tick_queued_at = 0
+    local ok, error_message = pcall(update_hud)
+    if not ok then
+        log(
+            "ERROR",
+            "HUD game-thread update failed: " .. tostring(error_message)
+        )
+    end
+end
+
+Callbacks.async_hud_tick = function()
+    local now = os.time()
+    if hud_tick_pending
+        and now - hud_tick_queued_at >= 10
+    then
+        hud_tick_pending = false
+        hud_tick_queued_at = 0
+        log("WARN", "Recovering stale queued HUD update.")
+    end
+    if hud_tick_pending then
+        return false
+    end
+
+    hud_tick_pending = true
+    hud_tick_queued_at = now
+    local queued, queue_error = pcall(
+        ExecuteInGameThread,
+        Callbacks.game_thread_hud_tick
+    )
+    if not queued then
+        hud_tick_pending = false
+        hud_tick_queued_at = 0
+        log(
+            "ERROR",
+            "HUD game-thread queue failed: " .. tostring(queue_error)
+        )
+    end
+    return false
+end
+
 local function start()
     if started then
         return
@@ -1229,32 +1284,35 @@ local function start()
         return
     end
 
+    Callbacks.empty_pre_hook = Callbacks.empty_pre_hook or function() end
+    Callbacks.on_chat = on_chat
+    Callbacks.on_possess = function(controller, pawn)
+        local player = unwrap(pawn)
+        if not is_valid(player) then
+            local pawn_ok, current_pawn = call_method(
+                unwrap(controller),
+                "K2_GetPawn"
+            )
+            if pawn_ok then
+                player = current_pawn
+            end
+        end
+        local cached = cache_player(player)
+        if cached then
+            discovery_complete = true
+        end
+    end
     local chat_ok, chat_error = pcall(
         RegisterHook,
         CHAT_PATH,
-        function() end,
-        on_chat
+        Callbacks.empty_pre_hook,
+        Callbacks.on_chat
     )
     local possess_ok, possess_error = pcall(
         RegisterHook,
         CONTROLLER_POSSESS_PATH,
-        function() end,
-        function(controller, pawn)
-            local player = unwrap(pawn)
-            if not is_valid(player) then
-                local pawn_ok, current_pawn = call_method(
-                    unwrap(controller),
-                    "K2_GetPawn"
-                )
-                if pawn_ok then
-                    player = current_pawn
-                end
-            end
-            local cached = cache_player(player)
-            if cached then
-                discovery_complete = true
-            end
-        end
+        Callbacks.empty_pre_hook,
+        Callbacks.on_possess
     )
     if not chat_ok or not possess_ok then
         log(
@@ -1273,7 +1331,7 @@ local function start()
     end
     queue_runtime_reload()
     next_runtime_reload_at = os.time() + SERVER_REFRESH_SECONDS
-    LoopInGameThreadWithDelay(HUD_TICK_MS, update_hud)
+    LoopAsync(HUD_TICK_MS, Callbacks.async_hud_tick)
     log(
         "INFO",
         string.format(
@@ -1306,5 +1364,6 @@ if f5_key_ok and f5_key ~= nil and RegisterKeyBind ~= nil then
 else
     log("INFO", "F5 HUD toggle unavailable on this host.")
 end
-RegisterInitGameStatePostHook(start)
-ExecuteInGameThreadWithDelay(10000, start)
+Callbacks.start = start
+RegisterInitGameStatePostHook(Callbacks.start)
+ExecuteInGameThreadWithDelay(10000, Callbacks.start)

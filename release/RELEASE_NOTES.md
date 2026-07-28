@@ -1,5 +1,8 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.25 cập nhật PalHud v1.4.1: vòng HUD dùng
+  `LoopAsync` và chỉ xếp tối đa một callback game-thread, đồng thời dedicated
+  server không còn sửa protocol chat outbound hoặc thử dựng UMG.
 - Launcher nội bộ v1.0.24 cài và tự kích hoạt PalHud v1.4.0 cho người chơi,
   gồm HUD booster/gacha, phím F5 bật tắt và logo nền. PalBooster vẫn chỉ chạy
   phía server; launcher không phân phối executable hoặc dữ liệu preview local.
