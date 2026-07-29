@@ -4,8 +4,9 @@
   "private": true,
   "description": "Client/server verification and anti-cheat mod for Palworld",
   "scripts": {
-    "test": "npm run test:probe && npm run test:installers",
+    "test": "npm run test:probe && npm run test:autojoin && npm run test:installers",
     "test:probe": "fengari tests/probe_tests.lua && fengari tests/client_probe_tests.lua && fengari tests/server_agent_probe_tests.lua && fengari tests/palhud_lifecycle_tests.lua && fengari tests/palhud_combat_tests.lua && powershell -ExecutionPolicy Bypass -File tests/palhud_bridge_contract_tests.ps1 && fengari tests/palhud_bridge_tests.lua",
+    "test:autojoin": "powershell -ExecutionPolicy Bypass -File tests/run_autojoin_probe_tests.ps1",
     "test:installers": "powershell -ExecutionPolicy Bypass -File tests/windows_installer_package_tests.ps1"
   },
   "devDependencies": {

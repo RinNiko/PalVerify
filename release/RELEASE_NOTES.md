@@ -1,5 +1,10 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.39 cài và tự kích hoạt `Pal3MienAutoJoin`. Sau khi mở
+  Palworld và chọn **Join Multiplayer Game**, client kết nối thẳng tới
+  `pal.ae3mien.net:28709`; module không chạy process hoặc command shell ngoài
+  game. Installer đồng bộ cả source Workshop lẫn cache UE4SS đang hoạt động.
+
 - Launcher nội bộ v1.0.38 cập nhật PalHud v1.4.11: mở wrapper
   `RemoteUnrealParam` trước khi gọi `FString.ToString()`, nên protocol
   `ClientMessage` từ server được parse và dựng HUD thật. Callback F5 được giữ

@@ -463,6 +463,7 @@ void unapproved_mod_parser_selects_only_safe_not_whitelisted_ids()
         "StatueMapMarkers:DUPLICATE_REPORT,"
         "UE4SSExperimentalPW:NOT_WHITELISTED,"
         "PalHud:NOT_WHITELISTED,"
+        "Pal3MienAutoJoin:NOT_WHITELISTED,"
         "Bad/Path:NOT_WHITELISTED,"
         "MapUnlocker:NOT_WHITELISTED"
     );

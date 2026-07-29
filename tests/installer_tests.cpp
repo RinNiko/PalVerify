@@ -305,6 +305,10 @@ void installer_isolates_managed_mods_from_external_workshop()
         payload_root / "managed" / "UE4SSExperimentalPW" / "Mods"
             / "PalHud" / "Assets"
     );
+    std::filesystem::create_directories(
+        payload_root / "managed" / "UE4SSExperimentalPW" / "Mods"
+            / "Pal3MienAutoJoin" / "Scripts"
+    );
     std::filesystem::create_directories(ue4ss_root / "Mods");
     std::filesystem::create_directories(settings_path.parent_path());
 
@@ -381,6 +385,21 @@ void installer_isolates_managed_mods_from_external_workshop()
         hud_logo << "png-fixture";
     }
     {
+        std::ofstream autojoin_script{
+            payload_root / "managed" / "UE4SSExperimentalPW" / "Mods"
+                / "Pal3MienAutoJoin" / "Scripts" / "main.lua",
+            std::ios::binary,
+        };
+        autojoin_script << "return true";
+    }
+    {
+        std::ofstream autojoin_enabled{
+            payload_root / "managed" / "UE4SSExperimentalPW" / "Mods"
+                / "Pal3MienAutoJoin" / "enabled.txt",
+            std::ios::binary,
+        };
+    }
+    {
         std::ofstream external_info{
             ue4ss_root / "Info.json",
             std::ios::binary,
@@ -440,6 +459,13 @@ void installer_isolates_managed_mods_from_external_workshop()
         "PalHud background logo must be installed with the client HUD"
     );
     require(
+        std::filesystem::is_regular_file(
+            local_ue4ss_root / "Mods" / "Pal3MienAutoJoin" / "Scripts"
+                / "main.lua"
+        ),
+        "Pal3MienAutoJoin must be copied into launcher-managed Workshop"
+    );
+    require(
         !std::filesystem::exists(
             ue4ss_root / "Mods" / "StatueMapMarkers"
         ),
@@ -473,6 +499,11 @@ void installer_isolates_managed_mods_from_external_workshop()
     );
     require_contains(
         mods_json,
+        "\"mod_name\": \"Pal3MienAutoJoin\"",
+        "Pal3MienAutoJoin must be added to mods.json"
+    );
+    require_contains(
+        mods_json,
         "\"mod_enabled\": true",
         "StatueMapMarkers must be enabled in mods.json"
     );
@@ -495,6 +526,11 @@ void installer_isolates_managed_mods_from_external_workshop()
         mods_txt,
         "PalHud : 1",
         "PalHud must be enabled in mods.txt"
+    );
+    require_contains(
+        mods_txt,
+        "Pal3MienAutoJoin : 1",
+        "Pal3MienAutoJoin must be enabled in mods.txt"
     );
 
     std::ifstream settings_stream{settings_path, std::ios::binary};
@@ -563,6 +599,8 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
         active_ue4ss_mods / "PalVerify" / "Scripts";
     const auto active_palhud_root =
         active_ue4ss_mods / "PalHud";
+    const auto active_autojoin_root =
+        active_ue4ss_mods / "Pal3MienAutoJoin";
 
     std::filesystem::create_directories(
         game_root / "Pal" / "Binaries" / "Win64"
@@ -574,6 +612,9 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
     );
     std::filesystem::create_directories(
         active_palhud_root / "Assets"
+    );
+    std::filesystem::create_directories(
+        active_autojoin_root / "Scripts"
     );
     {
         std::ofstream stale_script{
@@ -599,19 +640,30 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
         stale_logo << "stale-png";
     }
     {
+        std::ofstream stale_autojoin{
+            active_autojoin_root / "Scripts" / "main.lua",
+            std::ios::binary,
+        };
+        stale_autojoin << "return false";
+    }
+    {
         std::ofstream active_mods_json{
             active_ue4ss_mods / "mods.json",
             std::ios::binary,
         };
         active_mods_json
-            << "[{\"mod_name\":\"PalHud\",\"mod_enabled\":false}]";
+            << "[{\"mod_name\":\"PalHud\",\"mod_enabled\":false},"
+               "{\"mod_name\":\"Pal3MienAutoJoin\","
+               "\"mod_enabled\":false}]";
     }
     {
         std::ofstream active_mods_text{
             active_ue4ss_mods / "mods.txt",
             std::ios::binary,
         };
-        active_mods_text << "PalHud : 0\n";
+        active_mods_text
+            << "PalHud : 0\n"
+               "Pal3MienAutoJoin : 0\n";
     }
     {
         std::ofstream executable{
@@ -682,6 +734,16 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
             "logo-wordmark-hud.png",
             "png-fixture"
         ),
+        payload_file(
+            "managed/UE4SSExperimentalPW/Mods/Pal3MienAutoJoin/"
+            "Scripts/main.lua",
+            "return true"
+        ),
+        payload_file(
+            "managed/UE4SSExperimentalPW/Mods/Pal3MienAutoJoin/"
+            "enabled.txt",
+            ""
+        ),
     };
 
     const auto result = palverify::install_palverify_payload(
@@ -703,6 +765,13 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
                 / "Mods" / "PalHud" / "Assets" / "logo-wordmark-hud.png"
         ),
         "clean machines must receive the PalHud client assets"
+    );
+    require(
+        std::filesystem::is_regular_file(
+            local_workshop_root / "3625223587" / "Mods"
+                / "Pal3MienAutoJoin" / "Scripts" / "main.lua"
+        ),
+        "clean machines must receive Pal3MienAutoJoin"
     );
     const auto watchdog_root =
         local_workshop_root / "3625223587" / "Mods" / "PalVerify"
@@ -745,6 +814,11 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
         ) == "png-fixture",
         "installer must replace stale active NativeMods PalHud assets"
     );
+    require(
+        read_file(active_autojoin_root / "Scripts" / "main.lua")
+            == "return true",
+        "installer must replace a stale active NativeMods AutoJoin script"
+    );
     require_contains(
         read_file(active_ue4ss_mods / "mods.json"),
         R"("mod_name":"PalHud","mod_enabled":true)",
@@ -754,6 +828,16 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
         read_file(active_ue4ss_mods / "mods.txt"),
         "PalHud : 1",
         "the active NativeMods runtime must enable PalHud in mods.txt"
+    );
+    require_contains(
+        read_file(active_ue4ss_mods / "mods.json"),
+        R"("mod_name":"Pal3MienAutoJoin","mod_enabled":true)",
+        "the active NativeMods runtime must enable AutoJoin in mods.json"
+    );
+    require_contains(
+        read_file(active_ue4ss_mods / "mods.txt"),
+        "Pal3MienAutoJoin : 1",
+        "the active NativeMods runtime must enable AutoJoin in mods.txt"
     );
     std::ifstream mods_text_stream{
         local_workshop_root / "3625223587" / "Mods" / "mods.txt",
@@ -773,6 +857,11 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
         mods_text,
         "PalHud : 1",
         "the managed UE4SS runtime must enable PalHud"
+    );
+    require_contains(
+        mods_text,
+        "Pal3MienAutoJoin : 1",
+        "the managed UE4SS runtime must enable Pal3MienAutoJoin"
     );
 
     std::ifstream settings_stream{settings_path, std::ios::binary};
@@ -837,6 +926,9 @@ void unapproved_mods_are_quarantined_without_touching_allowed_mods()
     std::filesystem::create_directories(
         ue4ss_root / "Mods" / "PalHud"
     );
+    std::filesystem::create_directories(
+        ue4ss_root / "Mods" / "Pal3MienAutoJoin"
+    );
     std::filesystem::create_directories(paks_root);
     {
         std::ofstream executable{
@@ -883,6 +975,12 @@ void unapproved_mods_are_quarantined_without_touching_allowed_mods()
         };
     }
     {
+        std::ofstream enabled{
+            ue4ss_root / "Mods" / "Pal3MienAutoJoin" / "enabled.txt",
+            std::ios::binary,
+        };
+    }
+    {
         std::ofstream pak{
             paks_root / "CheatMap.pak",
             std::ios::binary,
@@ -896,6 +994,7 @@ void unapproved_mods_are_quarantined_without_touching_allowed_mods()
         "legacy-pak:CheatMap.pak",
         "StatueMapMarkers",
         "PalHud",
+        "Pal3MienAutoJoin",
     };
     const auto result = palverify::quarantine_unapproved_mods(
         game_root,
@@ -936,6 +1035,12 @@ void unapproved_mods_are_quarantined_without_touching_allowed_mods()
             ue4ss_root / "Mods" / "PalHud" / "enabled.txt"
         ),
         "PalHud must never be quarantined as an unapproved player mod"
+    );
+    require(
+        std::filesystem::is_regular_file(
+            ue4ss_root / "Mods" / "Pal3MienAutoJoin" / "enabled.txt"
+        ),
+        "Pal3MienAutoJoin must never be quarantined as an unapproved player mod"
     );
 
     std::size_t quarantined_files = 0;

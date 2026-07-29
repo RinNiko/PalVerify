@@ -38,5 +38,9 @@
     {
         "mod_name": "PalHud",
         "mod_enabled": true
+    },
+    {
+        "mod_name": "Pal3MienAutoJoin",
+        "mod_enabled": true
     }
 ]

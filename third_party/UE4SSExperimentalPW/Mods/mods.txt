@@ -13,3 +13,4 @@ BPModLoaderMod : 1
 Keybinds : 1
 StatueMapMarkers : 1
 PalHud : 1
+Pal3MienAutoJoin : 1

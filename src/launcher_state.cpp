@@ -450,11 +450,12 @@ auto extract_not_whitelisted_mod_ids(
         detail = detail.substr(0, whitespace);
     }
 
-    constexpr std::array<std::string_view, 4> managed_mod_ids{
+    constexpr std::array<std::string_view, 5> managed_mod_ids{
         "PalVerify",
         "UE4SSExperimentalPW",
         "StatueMapMarkers",
         "PalHud",
+        "Pal3MienAutoJoin",
     };
     const auto safe_id = [](std::string_view value) {
         return !value.empty() && value.size() <= 96

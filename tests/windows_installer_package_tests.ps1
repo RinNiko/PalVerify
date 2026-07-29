@@ -67,6 +67,11 @@ $serverConfig = Require-File `
 $releaseManifest = Require-File "release\palverify-launcher-manifest.json"
 $palHudSource = Require-File `
     "third_party\UE4SSExperimentalPW\Mods\PalHud\Scripts\main.lua"
+$autojoinProbe = Require-File `
+    "third_party\UE4SSExperimentalPW\Mods\Pal3MienAutoJoin\Scripts\main.lua"
+$autojoinEnabled = Join-Path `
+    $projectRoot `
+    "third_party\UE4SSExperimentalPW\Mods\Pal3MienAutoJoin\enabled.txt"
 $gitAttributes = Require-File ".gitattributes"
 $installerIcon = Join-Path `
     $projectRoot `
@@ -193,8 +198,25 @@ Require-Text $installerSource 'StatueMapMarkers : 1' `
     "installer must activate StatueMapMarkers in UE4SS mods.txt"
 Require-Text $installerSource 'PalHud : 1' `
     "installer must activate PalHud in UE4SS mods.txt"
+Require-Text $installerSource 'Pal3MienAutoJoin : 1' `
+    "installer must activate Pal3MienAutoJoin in UE4SS mods.txt"
 Require-Text $installerSource 'PalVerify : 1' `
     "installer must activate the PalVerify watchdog in UE4SS mods.txt"
+Require-Text $autojoinProbe 'pal.ae3mien.net' `
+    "AutoJoin must use the stable player-facing hostname"
+Require-Text $autojoinProbe '28709' `
+    "AutoJoin must use the public game port"
+Require-Text $autojoinProbe 'NotifyOnNewObject' `
+    "AutoJoin must follow the multiplayer join widget lifecycle"
+Require-Text $autojoinProbe 'ConnectServerByAddress' `
+    "AutoJoin must connect through the Palworld join widget"
+Require-NoText $autojoinProbe 'os.execute' `
+    "AutoJoin must not create a command shell"
+Require-NoText $autojoinProbe 'cmd.exe' `
+    "AutoJoin must not launch cmd.exe"
+if (-not (Test-Path -LiteralPath $autojoinEnabled -PathType Leaf)) {
+    $failures.Add("AutoJoin must include enabled.txt")
+}
 Require-Text $launcherResourceHeader '#define IDR_PALVERIFY_PAYLOAD 216' `
     "launcher resources must reserve a stable embedded payload resource ID"
 Require-Text $launcherSource 'unpack_payload_archive' `
@@ -280,8 +302,8 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.38"' `
-    "launcher must ship the PalHud nested FString hotfix"
+Require-Text $launcherSource 'launcher_version = "1.0.39"' `
+    "launcher must ship the managed AutoJoin payload revision"
 Require-Text $palHudSource 'local VERSION = "1.4.11"' `
     "launcher must bundle PalHud v1.4.11"
 Require-Text $palHudSource '[PALCOMBAT]|' `
@@ -337,10 +359,10 @@ Require-Text $launcherSource 'palverify_version = "1.0.16"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.38"' `
-    "stable manifest must trigger the managed PalHud payload update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.38"' `
-    "stable manifest must require the managed PalHud payload update"
+Require-Text $releaseManifest '"launcherVersion": "1.0.39"' `
+    "stable manifest must trigger the managed AutoJoin payload update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.39"' `
+    "stable manifest must require the managed AutoJoin payload update"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
 Require-Text $launcherSource `
