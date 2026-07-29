@@ -280,10 +280,10 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.32"' `
+Require-Text $launcherSource 'launcher_version = "1.0.33"' `
     "launcher must ship the managed PalHud payload revision"
-Require-Text $palHudSource 'local VERSION = "1.4.6"' `
-    "launcher must bundle PalHud v1.4.6"
+Require-Text $palHudSource 'local VERSION = "1.4.7"' `
+    "launcher must bundle PalHud v1.4.7"
 Require-Text $palHudSource 'ClientMessage' `
     "bundled PalHud must use targeted ClientMessage RPC"
 Require-NoText $palHudSource 'SendSystemToPlayerChat' `
@@ -304,6 +304,8 @@ Require-NoText $palHudSource 'runtime.local_preview' `
     "bundled PalHud must ignore stale local preview flags"
 Require-Text $palHudSource 'collapse_hud_for_local_controller' `
     "bundled PalHud must hide its viewport card when leaving a world"
+Require-Text $palHudSource 'if find_local_player_controller() ~= nil then' `
+    "bundled PalHud client must not self-deliver a syncing fallback"
 Require-NoText $palHudSource 'local cached = cache_player(player)' `
     "bundled PalHud must not retain possessed player UObjects between ticks"
 Require-Text $launcherSource 'palworld_is_running()' `
@@ -325,9 +327,9 @@ Require-Text $launcherSource 'palverify_version = "1.0.15"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.32"' `
+Require-Text $releaseManifest '"launcherVersion": "1.0.33"' `
     "stable manifest must trigger the managed PalHud payload update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.32"' `
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.33"' `
     "stable manifest must require the managed PalHud payload revision"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"

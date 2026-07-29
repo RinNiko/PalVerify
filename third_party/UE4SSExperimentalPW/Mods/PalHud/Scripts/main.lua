@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.6"
+local VERSION = "1.4.7"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -1201,13 +1201,20 @@ local function update_hud()
         next_runtime_reload_at = now + SERVER_REFRESH_SECONDS
         queue_runtime_reload()
     end
-    if not discovery_complete and os.time() >= next_discovery_at then
-        discover_controllers()
-    end
     if now < next_server_delivery_at then
         return
     end
     next_server_delivery_at = now + SERVER_REFRESH_SECONDS
+
+    if find_local_player_controller() ~= nil then
+        controllers = {}
+        discovery_complete = false
+        next_discovery_at = now + DISCOVERY_RETRY_SECONDS
+        return
+    end
+    if not discovery_complete and now >= next_discovery_at then
+        discover_controllers()
+    end
 
     local active = runtime.expires_at_unix > now
     local invalid = {}
