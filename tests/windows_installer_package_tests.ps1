@@ -174,6 +174,8 @@ Require-Text $gitAttributes 'packaging/client/README.md binary' `
     "package README bytes must remain stable across Windows checkouts"
 Require-Text $gitAttributes 'packaging/client/Scripts/main.lua binary' `
     "package probe bytes must remain stable across Windows checkouts"
+Require-Text $gitAttributes 'third_party/UE4SSExperimentalPW/** binary' `
+    "managed UE4SS payload bytes must remain stable across Windows checkouts"
 Require-Text $cmake 'palverify_payload_packer' `
     "CMake must build a dedicated payload resource packer"
 Require-Text $cmake 'embedded-palverify-payload.bin' `
@@ -302,10 +304,10 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.39"' `
-    "launcher must ship the managed AutoJoin payload revision"
-Require-Text $palHudSource 'local VERSION = "1.4.11"' `
-    "launcher must bundle PalHud v1.4.11"
+Require-Text $launcherSource 'launcher_version = "1.0.40"' `
+    "launcher must ship the managed PalHud payload revision"
+Require-Text $palHudSource 'local VERSION = "1.6.0"' `
+    "launcher must bundle PalHud v1.6.0"
 Require-Text $palHudSource '[PALCOMBAT]|' `
     "bundled PalHud must receive the combat protocol"
 Require-Text $palHudSource 'HUD_COMBAT_PROGRESS_NAME' `
@@ -359,10 +361,10 @@ Require-Text $launcherSource 'palverify_version = "1.0.16"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.39"' `
-    "stable manifest must trigger the managed AutoJoin payload update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.39"' `
-    "stable manifest must require the managed AutoJoin payload update"
+Require-Text $releaseManifest '"launcherVersion": "1.0.40"' `
+    "stable manifest must trigger the managed PalHud payload update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.40"' `
+    "stable manifest must require the managed PalHud payload update"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
 Require-Text $launcherSource `

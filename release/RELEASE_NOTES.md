@@ -1,5 +1,9 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.40 cập nhật PalHud v1.6.0: dòng Gacha có thời gian
+  nhận lượt mới nằm riêng bên dưới và thanh tiến độ đếm ngược độc lập với
+  Booster.
+
 - Launcher nội bộ v1.0.39 cài và tự kích hoạt `Pal3MienAutoJoin`. Sau khi mở
   Palworld và chọn **Join Multiplayer Game**, client kết nối thẳng tới
   `pal.ae3mien.net:28709`; module không chạy process hoặc command shell ngoài

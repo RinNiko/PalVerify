@@ -1,8 +1,8 @@
 {
-  "launcherVersion": "1.0.39",
-  "minimumLauncherVersion": "1.0.39",
+  "launcherVersion": "1.0.40",
+  "minimumLauncherVersion": "1.0.40",
   "launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe",
-  "launcherSha256": "c57189b261c644f93189de5ef065292910ad9d8a8ceb308879fc6bc10183f5b4",
+  "launcherSha256": "e20ee53ee7daeb172b0c4b7b8f3f3ab719ab65305e7b34faf8611aa012759948",
   "palVerifyVersion": "1.0.16",
   "palVerifyPackageDigest": "2ec190972ede9da426159829b14406df1517ca834f86d444055ec0bb60ab88d0",
   "requiredPalworldBuildId": "24370881",
