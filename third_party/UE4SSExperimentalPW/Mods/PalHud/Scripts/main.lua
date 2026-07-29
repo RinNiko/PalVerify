@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.10"
+local VERSION = "1.4.11"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -236,6 +236,7 @@ local function toggle_hud_visibility()
         )
     end
 end
+Callbacks.toggle_hud_visibility = toggle_hud_visibility
 
 local function read_member(target, member_name)
     if target == nil then
@@ -261,6 +262,10 @@ local function as_text(value)
     value = unwrap(value)
     if type(value) == "string" then
         return value
+    end
+    ok, text = call_value_method(value, "ToString")
+    if ok and text ~= nil then
+        return tostring(text)
     end
     if value ~= nil then
         return tostring(value)
@@ -1635,7 +1640,7 @@ if f5_key_ok and f5_key ~= nil and RegisterKeyBind ~= nil then
     local bind_ok, bind_error = pcall(
         RegisterKeyBind,
         f5_key,
-        toggle_hud_visibility
+        Callbacks.toggle_hud_visibility
     )
     if bind_ok then
         log("INFO", "F5 HUD toggle registered.")

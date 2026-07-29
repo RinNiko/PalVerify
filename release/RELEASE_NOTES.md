@@ -1,5 +1,10 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.38 cập nhật PalHud v1.4.11: mở wrapper
+  `RemoteUnrealParam` trước khi gọi `FString.ToString()`, nên protocol
+  `ClientMessage` từ server được parse và dựng HUD thật. Callback F5 được giữ
+  tham chiếu mạnh để không bị Lua callback GC thu hồi giữa phiên.
+
 - Launcher nội bộ v1.0.37 cập nhật PalHud v1.4.10: đọc đúng
   wrapper `FString` của `ClientMessage`, để HUD booster và thanh combat
   cooldown render ổn định trên client sau khi server gửi protocol.

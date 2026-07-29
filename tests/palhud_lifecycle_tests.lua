@@ -53,6 +53,25 @@ if type(api) == "table" then
         "FString protocol wrappers do not require UObject validity"
     )
 
+    local nested_string_wrapper = {
+        get = function()
+            return {
+                ToString = function()
+                    return "[PALHUD]|0|0|0|1|0|0|Nested|"
+                end,
+            }
+        end,
+    }
+    check(
+        api.as_text(nested_string_wrapper)
+            == "[PALHUD]|0|0|0|1|0|0|Nested|",
+        "RemoteUnrealParam unwraps before FString ToString"
+    )
+    check(
+        type(PalHudCallbacks.toggle_hud_visibility) == "function",
+        "F5 toggle callback remains strongly referenced"
+    )
+
     local controller = api.find_local_player_controller()
     check(controller == nil, "stale compass does not resolve a controller")
     check(
