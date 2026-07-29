@@ -280,10 +280,10 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.27"' `
+Require-Text $launcherSource 'launcher_version = "1.0.28"' `
     "launcher must ship the managed PalHud payload revision"
-Require-Text $palHudSource 'local VERSION = "1.4.3"' `
-    "launcher must bundle PalHud v1.4.3"
+Require-Text $palHudSource 'local VERSION = "1.4.4"' `
+    "launcher must bundle PalHud v1.4.4"
 Require-Text $palHudSource 'ClientMessage' `
     "bundled PalHud must use targeted ClientMessage RPC"
 Require-NoText $palHudSource 'SendSystemToPlayerChat' `
@@ -294,6 +294,10 @@ Require-NoText $palHudSource 'BP_GetUniqueId' `
     "bundled PalHud must not call the crashing player UniqueId path"
 Require-NoText $palHudSource 'GetPlayerUniqueIdToString' `
     "bundled PalHud must not convert player UniqueId during HUD delivery"
+Require-Text $palHudSource 'K2_OnLogout' `
+    "bundled PalHud must release cached controllers before logout"
+Require-Text $palHudSource 'UnPossess' `
+    "bundled PalHud must release cached controllers before unpossess"
 Require-Text $launcherSource 'palworld_is_running()' `
     "launcher must detect a running Palworld process before installing mods"
 Require-Text $launcherSource 'waiting_for_game_exit' `
@@ -313,9 +317,9 @@ Require-Text $launcherSource 'palverify_version = "1.0.14"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.27"' `
+Require-Text $releaseManifest '"launcherVersion": "1.0.28"' `
     "stable manifest must trigger the managed PalHud payload update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.27"' `
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.28"' `
     "stable manifest must require the managed PalHud payload revision"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"

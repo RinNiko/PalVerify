@@ -1,5 +1,8 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.28 cập nhật PalHud v1.4.4: giải phóng cache player
+  controller bằng pre-hook `K2_OnLogout` và `UnPossess` trước khi engine hủy
+  UObject, tránh RPC HUD gọi lại controller đã stale sau khi người chơi rời.
 - Launcher nội bộ v1.0.27 cập nhật PalHud v1.4.3: bỏ hoàn toàn đường chuyển
   `UniqueId` lúc gửi HUD, đối chiếu runtime bằng tên người chơi duy nhất và
   giữ trạng thái đồng bộ nếu tên bị trùng.

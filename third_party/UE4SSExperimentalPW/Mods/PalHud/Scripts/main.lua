@@ -1,10 +1,12 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.3"
+local VERSION = "1.4.4"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
 local PROTOCOL_PREFIX = "[PALHUD]|"
 local CONTROLLER_POSSESS_PATH = "/Script/Engine.Controller:Possess"
+local CONTROLLER_UNPOSSESS_PATH = "/Script/Engine.Controller:UnPossess"
+local GAME_MODE_LOGOUT_PATH = "/Script/Engine.GameModeBase:K2_OnLogout"
 local CHAT_PATH = "/Script/Pal.PalGameStateInGame:BroadcastChatMessage"
 local CLIENT_MESSAGE_PATH = "/Script/Engine.PlayerController:ClientMessage"
 local USER_WIDGET_CLASS_PATH = "/Script/UMG.UserWidget"
@@ -929,6 +931,25 @@ local function cache_player(raw_player)
     return true, "ready"
 end
 
+local function forget_controller(raw_controller)
+    local controller = unwrap(raw_controller)
+    if controller == nil then
+        return
+    end
+    local removed = false
+    for key, entry in pairs(controllers) do
+        if entry.controller == controller then
+            controllers[key] = nil
+            removed = true
+        end
+    end
+    if removed then
+        discovery_complete = false
+        next_discovery_at = os.time() + DISCOVERY_RETRY_SECONDS
+        log("INFO", "Released player controller cache.")
+    end
+end
+
 local function discover_controllers()
     local found = {}
     local seen = {}
@@ -1301,6 +1322,8 @@ local function start()
         "/Script/Pal.PalPlayerController:GetPalPlayerState",
         "/Script/Engine.PlayerState:GetPlayerName",
         CONTROLLER_POSSESS_PATH,
+        CONTROLLER_UNPOSSESS_PATH,
+        GAME_MODE_LOGOUT_PATH,
         CHAT_PATH,
     }
     for _, path in ipairs(required_functions) do
@@ -1315,6 +1338,12 @@ local function start()
     Callbacks.empty_pre_hook = Callbacks.empty_pre_hook or function() end
     Callbacks.on_chat = on_chat
     Callbacks.on_client_message = on_client_message
+    Callbacks.on_logout = function(_, exiting_controller)
+        forget_controller(exiting_controller)
+    end
+    Callbacks.on_unpossess = function(controller)
+        forget_controller(controller)
+    end
     Callbacks.on_possess = function(controller, pawn)
         local player = unwrap(pawn)
         if not is_valid(player) then
@@ -1349,7 +1378,24 @@ local function start()
         Callbacks.empty_pre_hook,
         Callbacks.on_possess
     )
-    if not chat_ok or not client_message_ok or not possess_ok then
+    local logout_ok, logout_error = pcall(
+        RegisterHook,
+        GAME_MODE_LOGOUT_PATH,
+        Callbacks.on_logout,
+        Callbacks.empty_pre_hook
+    )
+    local unpossess_ok, unpossess_error = pcall(
+        RegisterHook,
+        CONTROLLER_UNPOSSESS_PATH,
+        Callbacks.on_unpossess,
+        Callbacks.empty_pre_hook
+    )
+    if not chat_ok
+        or not client_message_ok
+        or not possess_ok
+        or not logout_ok
+        or not unpossess_ok
+    then
         log(
             "ERROR",
             "PalHud hook registration failed: "
@@ -1357,6 +1403,8 @@ local function start()
                     chat_error
                         or client_message_error
                         or possess_error
+                        or logout_error
+                        or unpossess_error
                 )
         )
         return
