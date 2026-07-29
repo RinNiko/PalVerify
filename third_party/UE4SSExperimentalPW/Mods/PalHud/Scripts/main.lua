@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.4"
+local VERSION = "1.4.5"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -69,8 +69,7 @@ local render_started_logged = false
 local delivery_started_logged = false
 local last_delivery_failure_reason = nil
 local last_discovery_signature = nil
-local local_preview_render_logged = false
-local last_local_preview_failure = nil
+local last_render_failure_reason = nil
 local hud_visible = true
 local visibility_update_pending = false
 local hud_tick_pending = false
@@ -155,6 +154,21 @@ local function apply_hud_visibility()
         "SetVisibility",
         hud_visible and 3 or 1
     )
+end
+
+local function collapse_hud_for_local_controller(raw_controller)
+    if not is_valid(hud_overlay) then
+        return false
+    end
+    local controller = unwrap(raw_controller)
+    local local_ok, is_local = call_method(
+        controller,
+        "IsLocalPlayerController"
+    )
+    if not local_ok or is_local ~= true then
+        return false
+    end
+    return call_method(hud_overlay, "SetVisibility", 1)
 end
 
 local function toggle_hud_visibility()
@@ -635,8 +649,8 @@ end
 local function render_client_hud(view)
     local ready, failure_reason = ensure_hud_widget()
     if not ready then
-        if failure_reason ~= last_local_preview_failure then
-            last_local_preview_failure = failure_reason
+        if failure_reason ~= last_render_failure_reason then
+            last_render_failure_reason = failure_reason
             log("INFO", "UMG HUD waiting: " .. tostring(failure_reason))
         end
         return false
@@ -683,12 +697,13 @@ local function render_client_hud(view)
             booster_visibility
         )
         and call_method(hud_progress_bar, "SetPercent", progress)
+        and apply_hud_visibility()
     if not ok and not render_failure_logged then
         render_failure_logged = true
         log("ERROR", "UMG booster card update failed.")
     elseif ok then
         render_failure_logged = false
-        last_local_preview_failure = nil
+        last_render_failure_reason = nil
     end
     return ok
 end
@@ -1187,32 +1202,11 @@ local function send_protocol(entry, status, syncing)
     return true, nil
 end
 
-local function render_local_preview()
-    local now = os.time()
-    local active = runtime.expires_at_unix > now
-    local view = inactive_view(true, nil, nil)
-    if active then
-        local status = runtime.hud_players["local-preview"]
-        view = booster_view(status, now)
-    end
-    local rendered = render_client_hud(view)
-    if rendered and not local_preview_render_logged then
-        local_preview_render_logged = true
-        last_local_preview_failure = nil
-        log("INFO", "Local preview HUD render started.")
-    end
-    return rendered
-end
-
 local function update_hud()
     local now = os.time()
     if now >= next_runtime_reload_at then
         next_runtime_reload_at = now + SERVER_REFRESH_SECONDS
         queue_runtime_reload()
-    end
-    if runtime.local_preview == true then
-        render_local_preview()
-        return
     end
     if not discovery_complete and os.time() >= next_discovery_at then
         discover_controllers()
@@ -1342,6 +1336,7 @@ local function start()
         forget_controller(exiting_controller)
     end
     Callbacks.on_unpossess = function(controller)
+        collapse_hud_for_local_controller(controller)
         forget_controller(controller)
     end
     Callbacks.on_possess = function(controller, pawn)
