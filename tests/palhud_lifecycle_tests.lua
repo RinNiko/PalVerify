@@ -42,6 +42,17 @@ local api = _G.__PALHUD_TEST_API
 check(type(api) == "table", "PalHud exposes lifecycle helpers in test mode")
 
 if type(api) == "table" then
+    local string_wrapper = {
+        ToString = function()
+            return "[PALHUD]|0|0|0|1|0|0|Alice|"
+        end,
+    }
+    check(
+        api.as_text(string_wrapper)
+            == "[PALHUD]|0|0|0|1|0|0|Alice|",
+        "FString protocol wrappers do not require UObject validity"
+    )
+
     local controller = api.find_local_player_controller()
     check(controller == nil, "stale compass does not resolve a controller")
     check(

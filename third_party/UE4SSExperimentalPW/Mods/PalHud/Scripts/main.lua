@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.9"
+local VERSION = "1.4.10"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -167,6 +167,23 @@ local function call_method(target, method_name, ...)
     return true, result
 end
 
+local function call_value_method(target, method_name, ...)
+    if target == nil then
+        return false, nil
+    end
+    local method_ok, method = pcall(function()
+        return target[method_name]
+    end)
+    if not method_ok or method == nil then
+        return false, nil
+    end
+    local ok, result = pcall(method, target, ...)
+    if not ok then
+        return false, nil
+    end
+    return true, result
+end
+
 local function apply_hud_visibility()
     if not is_valid(hud_overlay) then
         return false
@@ -237,7 +254,7 @@ local function as_text(value)
     if type(value) == "string" then
         return value
     end
-    local ok, text = call_method(value, "ToString")
+    local ok, text = call_value_method(value, "ToString")
     if ok and text ~= nil then
         return tostring(text)
     end
@@ -1601,6 +1618,7 @@ end
 
 if rawget(_G, "__PALHUD_TESTING") == true then
     _G.__PALHUD_TEST_API = {
+        as_text = as_text,
         combat_view = combat_view,
         find_local_player_controller = find_local_player_controller,
         is_valid = is_valid,

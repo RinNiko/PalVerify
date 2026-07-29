@@ -1,5 +1,9 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.37 cập nhật PalHud v1.4.10: đọc đúng
+  wrapper `FString` của `ClientMessage`, để HUD booster và thanh combat
+  cooldown render ổn định trên client sau khi server gửi protocol.
+
 - Launcher nội bộ v1.0.36 cập nhật PalHud v1.4.9: nhận protocol
   `[PALCOMBAT]` từ PalCombatlog và hiển thị block chiến đấu với thanh cooldown
   đếm ngược; trạng thái combat không còn chiếm khung chat.
