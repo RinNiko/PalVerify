@@ -304,10 +304,18 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.40"' `
+Require-Text $launcherSource 'launcher_version = "1.0.41"' `
     "launcher must ship the managed PalHud payload revision"
-Require-Text $palHudSource 'local VERSION = "1.6.0"' `
-    "launcher must bundle PalHud v1.6.0"
+Require-Text $palHudSource 'local VERSION = "1.7.0"' `
+    "launcher must bundle PalHud v1.7.0"
+Require-Text $palHudSource '[PALHOLO]|' `
+    "bundled PalHud must receive hot-reload world holograms"
+Require-Text $palHudSource 'BP_BuildObject_Signboard' `
+    "bundled PalHud must use the cooked signboard actor"
+Require-Text $palHudSource 'SetTintColorAndOpacity' `
+    "bundled PalHud must apply configured hologram colors"
+Require-Text $palHudSource 'SetRelativeScale3D' `
+    "bundled PalHud must apply configured hologram sizes"
 Require-Text $palHudSource '[PALCOMBAT]|' `
     "bundled PalHud must receive the combat protocol"
 Require-Text $palHudSource 'HUD_COMBAT_PROGRESS_NAME' `
@@ -361,9 +369,9 @@ Require-Text $launcherSource 'palverify_version = "1.0.16"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.40"' `
+Require-Text $releaseManifest '"launcherVersion": "1.0.41"' `
     "stable manifest must trigger the managed PalHud payload update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.40"' `
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.41"' `
     "stable manifest must require the managed PalHud payload update"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"

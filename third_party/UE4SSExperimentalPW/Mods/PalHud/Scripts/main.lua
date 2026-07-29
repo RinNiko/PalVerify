@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.6.0"
+local VERSION = "1.7.0"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -12,11 +12,12 @@ local HOLOGRAM_HEIGHT_OFFSET = 180
 local HOLOGRAM_MAX_COUNT = 24
 local HOLOGRAM_MAX_LINES = 4
 local HOLOGRAM_MAX_LINE_CHARACTERS = 80
-local HOLOGRAM_TICK_MS = 100
+local HOLOGRAM_TICK_MS = 16
 local CONTROLLER_POSSESS_PATH = "/Script/Engine.Controller:Possess"
 local CONTROLLER_UNPOSSESS_PATH = "/Script/Engine.Controller:UnPossess"
 local GAME_MODE_LOGOUT_PATH = "/Script/Engine.GameModeBase:K2_OnLogout"
 local CHAT_PATH = "/Script/Pal.PalGameStateInGame:BroadcastChatMessage"
+local ENTER_CHAT_PATH = "/Script/Pal.PalPlayerState:EnterChat"
 local CLIENT_MESSAGE_PATH = "/Script/Engine.PlayerController:ClientMessage"
 local USER_WIDGET_CLASS_PATH = "/Script/UMG.UserWidget"
 local WIDGET_TREE_CLASS_PATH = "/Script/UMG.WidgetTree"
@@ -50,6 +51,8 @@ local HUD_PROGRESS_NAME = "PalHud_Progress"
 local HOLOGRAM_WIDGET_TREE_NAME = "PalHud_HologramWidgetTree"
 local HOLOGRAM_CANVAS_NAME = "PalHud_HologramCanvas"
 local HOLOGRAM_NOTICE_NAME = "PalHud_HologramNotice"
+local HOLOGRAM_VISUAL_TEST_ID = "local-visual"
+local HOLOGRAM_VISUAL_TEST_SECONDS = 12
 local PLAYER_CLASS_NAMES = {
     "PalPlayerCharacter",
     "BP_Player_Female_C",
@@ -58,6 +61,21 @@ local PLAYER_CLASS_NAMES = {
 PalHudCallbacks = PalHudCallbacks or {}
 local Callbacks = PalHudCallbacks
 local Hologram = {}
+Hologram.WORLD_WIDGET_TREE_NAME = "PalHud_WorldHologramWidgetTree"
+Hologram.WORLD_WIDGET_ROOT_NAME = "PalHud_WorldHologramRoot"
+Hologram.WORLD_WIDGET_FRAME_NAME = "PalHud_WorldHologramFrame"
+Hologram.WORLD_WIDGET_CONTENT_NAME = "PalHud_WorldHologramContent"
+Hologram.WORLD_WIDGET_LOGO_BOX_NAME = "PalHud_WorldHologramLogoBox"
+Hologram.WORLD_WIDGET_LOGO_NAME = "PalHud_WorldHologramLogo"
+Hologram.WORLD_WIDGET_TEXT_NAME = "PalHud_WorldHologramText"
+Hologram.SIGNBOARD_ASSET_PATH =
+    "/Game/Pal/Blueprint/MapObject/BuildObject/BP_BuildObject_Signboard.BP_BuildObject_Signboard"
+Hologram.SIGNBOARD_CLASS_PATH =
+    "/Game/Pal/Blueprint/MapObject/BuildObject/BP_BuildObject_Signboard.BP_BuildObject_Signboard_C"
+Hologram.VISUAL_TEST_TEXT =
+    "CHÀO MỪNG ĐẾN PALWORLD 3 MIỀN\nChúc bạn chơi vui vẻ!"
+Hologram.VISUAL_TEST_SCALE = 0.75
+Hologram.client_revision = ""
 
 local function script_directory()
     local info =
@@ -128,12 +146,13 @@ local hologram_load_pending = false
 local hologram_persist_pending = false
 local hologram_persist_dirty = false
 local client_holograms = {}
-local client_hologram_revision = -1
 local hologram_overlay = nil
 local hologram_canvas = nil
 local hologram_notice_border = nil
 local hologram_notice_text = nil
 local hologram_notice_hide_at = 0
+local hologram_visual_test_record = nil
+local hologram_visual_test_hide_at = 0
 local hologram_loop_started = false
 local hologram_tick_pending = false
 local runtime = {
@@ -246,6 +265,15 @@ local function apply_hud_visibility()
             hologram_overlay,
             "SetVisibility",
             hud_visible and 3 or 1
+        ) or updated
+    end
+    if type(hologram_visual_test_record) == "table"
+        and is_valid(hologram_visual_test_record.actor)
+    then
+        updated = call_method(
+            hologram_visual_test_record.actor,
+            "SetActorHiddenInGame",
+            not hud_visible
         ) or updated
     end
     return updated
@@ -462,6 +490,37 @@ function Hologram.parse_command(raw_message)
         end
         return { action = action }
     end
+    if action == "visual" then
+        if rest == "" then
+            return {
+                action = action,
+                pitch = 0,
+                yaw = 0,
+                roll = 0,
+            }
+        end
+        local raw_pitch, raw_yaw, raw_roll = rest:match(
+            "^(%S+)%s+(%S+)%s+(%S+)$"
+        )
+        local pitch = tonumber(raw_pitch)
+        local yaw = tonumber(raw_yaw)
+        local roll = tonumber(raw_roll)
+        if pitch == nil
+            or yaw == nil
+            or roll == nil
+            or math.abs(pitch) > 180
+            or math.abs(yaw) > 180
+            or math.abs(roll) > 180
+        then
+            return nil, "invalid_visual_angles"
+        end
+        return {
+            action = action,
+            pitch = pitch,
+            yaw = yaw,
+            roll = roll,
+        }
+    end
     if action == "move" or action == "remove" then
         local id = Hologram.sanitize_id(rest)
         if id == nil then
@@ -506,6 +565,11 @@ function Hologram.normalized(record)
     local y = tonumber(record.y)
     local z = tonumber(record.z)
     local max_distance = tonumber(record.max_distance)
+    local color = tostring(record.color or "#FFFFFF"):upper()
+    local scale = tonumber(record.scale) or 1
+    local pitch = tonumber(record.pitch) or 0
+    local yaw = tonumber(record.yaw) or 0
+    local roll = tonumber(record.roll) or 0
     local text = tostring(record.text or "")
     local canonical_text = Hologram.sanitize_text(
         text:gsub("\n", "|")
@@ -520,6 +584,14 @@ function Hologram.normalized(record)
         or max_distance == nil
         or max_distance < 100
         or max_distance > 100000
+        or color:match(
+            "^#[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]$"
+        ) == nil
+        or scale < 0.1
+        or scale > 5
+        or math.abs(pitch) > 180
+        or math.abs(yaw) > 180
+        or math.abs(roll) > 180
         or text == ""
         or canonical_text ~= text
         or text:find("\t", 1, true) ~= nil
@@ -532,6 +604,11 @@ function Hologram.normalized(record)
         y = y,
         z = z,
         max_distance = math.floor(max_distance),
+        color = color,
+        scale = scale,
+        pitch = pitch,
+        yaw = yaw,
+        roll = roll,
         text = text,
     }
 end
@@ -544,12 +621,17 @@ function Hologram.serialize_store(holograms)
             table.insert(
                 lines,
                 string.format(
-                    "%s\t%.6f\t%.6f\t%.6f\t%d\t%s",
+                    "%s\t%.6f\t%.6f\t%.6f\t%d\t%s\t%.4f\t%.4f\t%.4f\t%.4f\t%s",
                     record.id,
                     record.x,
                     record.y,
                     record.z,
                     record.max_distance,
+                    record.color,
+                    record.scale,
+                    record.pitch,
+                    record.yaw,
+                    record.roll,
                     Hologram.percent_encode(record.text)
                 )
             )
@@ -562,15 +644,28 @@ function Hologram.parse_store(document)
     local holograms = {}
     local count = 0
     for line in tostring(document or ""):gmatch("[^\r\n]+") do
-        local id, x, y, z, max_distance, encoded_text = line:match(
-            "^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t(.*)$"
+        local id, x, y, z, max_distance, color, scale, pitch, yaw, roll,
+            encoded_text = line:match(
+            "^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)"
+                .. "\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)"
+                .. "\t([^\t]+)\t(.*)$"
         )
+        if id == nil then
+            id, x, y, z, max_distance, encoded_text = line:match(
+                "^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t(.*)$"
+            )
+        end
         local record = Hologram.normalized({
             id = id,
             x = x,
             y = y,
             z = z,
             max_distance = max_distance,
+            color = color,
+            scale = scale,
+            pitch = pitch,
+            yaw = yaw,
+            roll = roll,
             text = Hologram.percent_decode(encoded_text),
         })
         if record == nil or holograms[record.id] ~= nil then
@@ -585,6 +680,14 @@ function Hologram.parse_store(document)
     return holograms, nil
 end
 
+function Hologram.sanitize_revision(value)
+    local revision = tostring(value or "")
+    if revision:match("^[A-Za-z0-9._-]+$") == nil or #revision > 96 then
+        return "invalid"
+    end
+    return revision
+end
+
 function Hologram.serialize_protocol(revision, holograms)
     local records = {}
     for _, id in ipairs(Hologram.sorted_ids(holograms)) do
@@ -593,26 +696,31 @@ function Hologram.serialize_protocol(revision, holograms)
             table.insert(
                 records,
                 string.format(
-                    "%s,%.6f,%.6f,%.6f,%d,%s",
+                    "%s,%.6f,%.6f,%.6f,%d,%s,%.4f,%.4f,%.4f,%.4f,%s",
                     record.id,
                     record.x,
                     record.y,
                     record.z,
                     record.max_distance,
+                    record.color,
+                    record.scale,
+                    record.pitch,
+                    record.yaw,
+                    record.roll,
                     Hologram.percent_encode(record.text)
                 )
             )
         end
     end
     return HOLOGRAM_PROTOCOL_PREFIX
-        .. tostring(math.max(0, math.floor(tonumber(revision) or 0)))
+        .. Hologram.sanitize_revision(revision)
         .. "|"
         .. table.concat(records, "~")
 end
 
 function Hologram.parse_protocol(raw_message)
     local revision_text, payload = tostring(raw_message or ""):match(
-        "^%[PALHOLO%]|(%d+)|(.*)$"
+        "^%[PALHOLO%]|([^|]+)|(.*)$"
     )
     if revision_text == nil then
         return nil
@@ -621,16 +729,29 @@ function Hologram.parse_protocol(raw_message)
     local count = 0
     if payload ~= "" then
         for encoded_record in (payload .. "~"):gmatch("(.-)~") do
-            local id, x, y, z, max_distance, encoded_text =
+            local id, x, y, z, max_distance, color, scale, pitch, yaw,
+                roll, encoded_text =
                 encoded_record:match(
-                    "^([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),(.*)$"
+                    "^([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),"
+                        .. "([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),(.*)$"
                 )
+            if id == nil then
+                id, x, y, z, max_distance, encoded_text =
+                    encoded_record:match(
+                        "^([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),(.*)$"
+                    )
+            end
             local record = Hologram.normalized({
                 id = id,
                 x = x,
                 y = y,
                 z = z,
                 max_distance = max_distance,
+                color = color,
+                scale = scale,
+                pitch = pitch,
+                yaw = yaw,
+                roll = roll,
                 text = Hologram.percent_decode(encoded_text),
             })
             if record == nil or holograms[record.id] ~= nil then
@@ -643,7 +764,7 @@ function Hologram.parse_protocol(raw_message)
             holograms[record.id] = record
         end
     end
-    return tonumber(revision_text), holograms
+    return Hologram.sanitize_revision(revision_text), holograms
 end
 
 function Hologram.is_admin(controller)
@@ -1309,12 +1430,24 @@ local function remove_hologram_widget(record)
     end
 end
 
+local function remove_hologram_record(record)
+    remove_hologram_widget(record)
+    if type(record) == "table" and is_valid(record.actor) then
+        call_method(record.actor, "K2_DestroyActor")
+    end
+    if type(record) == "table" then
+        record.actor = nil
+        record.widget_component = nil
+        record.static_mesh = nil
+    end
+end
+
 local function clear_client_holograms()
     for _, record in pairs(client_holograms) do
-        remove_hologram_widget(record)
+        remove_hologram_record(record)
     end
     client_holograms = {}
-    client_hologram_revision = -1
+    Hologram.client_revision = ""
     if is_valid(hologram_overlay) then
         call_method(hologram_overlay, "RemoveFromParent")
     end
@@ -1323,6 +1456,16 @@ local function clear_client_holograms()
     hologram_notice_border = nil
     hologram_notice_text = nil
     hologram_notice_hide_at = 0
+    if type(hologram_visual_test_record) == "table"
+        and is_valid(hologram_visual_test_record.actor)
+    then
+        call_method(
+            hologram_visual_test_record.actor,
+            "K2_DestroyActor"
+        )
+    end
+    hologram_visual_test_record = nil
+    hologram_visual_test_hide_at = 0
 end
 
 local function ensure_hologram_layer()
@@ -1558,45 +1701,318 @@ local function render_hologram_notice(message)
     return true
 end
 
+function Hologram.update_widget(controller, player_location, record)
+    local visible = false
+    if player_location ~= nil and ensure_hologram_widget(record) then
+        local dx = record.x - player_location.X
+        local dy = record.y - player_location.Y
+        local dz = record.z - player_location.Z
+        local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if distance <= record.max_distance then
+            local screen = Hologram.project_world_location(
+                controller,
+                { X = record.x, Y = record.y, Z = record.z }
+            )
+            if screen ~= nil then
+                local scale = math.max(
+                    0.72,
+                    math.min(
+                        1.08,
+                        1.08 - (distance / record.max_distance) * 0.36
+                    )
+                )
+                call_method(record.slot, "SetPosition", screen)
+                call_method(
+                    record.border,
+                    "SetRenderScale",
+                    { X = scale, Y = scale }
+                )
+                call_method(record.border, "SetVisibility", 3)
+                visible = true
+            end
+        end
+    end
+    if not visible and is_valid(record.border) then
+        call_method(record.border, "SetVisibility", 1)
+    end
+    return visible
+end
+
+function Hologram.offset_rotation(rotation, record)
+    local pitch = tonumber(read_member(rotation, "Pitch")) or 0
+    local yaw = tonumber(read_member(rotation, "Yaw")) or 0
+    local roll = tonumber(read_member(rotation, "Roll")) or 0
+    pitch = pitch + (tonumber(record.pitch) or 0)
+    yaw = yaw + (tonumber(record.yaw) or 0)
+    roll = roll + (tonumber(record.roll) or 0)
+    local ok, adjusted = pcall(FRotator, pitch, yaw, roll)
+    if ok then
+        return adjusted
+    end
+    return { Pitch = pitch, Yaw = yaw, Roll = roll }
+end
+
+function Hologram.identity_transform()
+    return {
+        Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+        Translation = { X = 0, Y = 0, Z = 0 },
+        Scale3D = { X = 1, Y = 1, Z = 1 },
+    }
+end
+
+function Hologram.ensure_world_widget(controller, record)
+    if is_valid(record.widget_component)
+        and is_valid(record.world_widget)
+        and is_valid(record.world_text)
+    then
+        return true
+    end
+    if not is_valid(widget_blueprint_library) then
+        widget_blueprint_library = find_required_object(
+            WIDGET_BLUEPRINT_LIBRARY_PATH
+        )
+    end
+    if not is_valid(rendering_library) then
+        rendering_library = find_required_object(RENDERING_LIBRARY_PATH)
+    end
+    if not is_valid(user_widget_class) then
+        user_widget_class = find_required_object(USER_WIDGET_CLASS_PATH)
+    end
+    if not is_valid(widget_tree_class) then
+        widget_tree_class = find_required_object(WIDGET_TREE_CLASS_PATH)
+    end
+    if not is_valid(text_block_class) then
+        text_block_class = find_required_object(TEXT_BLOCK_CLASS_PATH)
+    end
+    if not is_valid(size_box_class) then
+        size_box_class = find_required_object(SIZE_BOX_CLASS_PATH)
+    end
+    if not is_valid(border_class) then
+        border_class = find_required_object(BORDER_CLASS_PATH)
+    end
+    if not is_valid(vertical_box_class) then
+        vertical_box_class = find_required_object(VERTICAL_BOX_CLASS_PATH)
+    end
+    if not is_valid(widget_blueprint_library)
+        or not is_valid(rendering_library)
+        or not is_valid(user_widget_class)
+        or not is_valid(widget_tree_class)
+        or not is_valid(text_block_class)
+        or not is_valid(size_box_class)
+        or not is_valid(border_class)
+        or not is_valid(vertical_box_class)
+        or not is_valid(Hologram.widget_component_class)
+    then
+        return false
+    end
+
+    local widget_ok, world_widget = call_method(
+        widget_blueprint_library,
+        "Create",
+        controller,
+        user_widget_class,
+        controller
+    )
+    if not widget_ok or not is_valid(world_widget) then
+        return false
+    end
+    local widget_tree = construct_widget(
+        widget_tree_class,
+        world_widget,
+        Hologram.WORLD_WIDGET_TREE_NAME
+    )
+    local root = widget_tree ~= nil and construct_widget(
+        size_box_class,
+        widget_tree,
+        Hologram.WORLD_WIDGET_ROOT_NAME
+    ) or nil
+    local frame = root ~= nil and construct_widget(
+        border_class,
+        root,
+        Hologram.WORLD_WIDGET_FRAME_NAME
+    ) or nil
+    local content = frame ~= nil and construct_widget(
+        vertical_box_class,
+        frame,
+        Hologram.WORLD_WIDGET_CONTENT_NAME
+    ) or nil
+    local logo_box = content ~= nil and construct_widget(
+        size_box_class,
+        content,
+        Hologram.WORLD_WIDGET_LOGO_BOX_NAME
+    ) or nil
+    local logo = logo_box ~= nil and construct_widget(
+        border_class,
+        logo_box,
+        Hologram.WORLD_WIDGET_LOGO_NAME
+    ) or nil
+    local text_block = content ~= nil and construct_widget(
+        text_block_class,
+        content,
+        Hologram.WORLD_WIDGET_TEXT_NAME
+    ) or nil
+    if widget_tree == nil
+        or root == nil
+        or frame == nil
+        or content == nil
+        or logo_box == nil
+        or logo == nil
+        or text_block == nil
+    then
+        return false
+    end
+    local assigned = pcall(function()
+        world_widget.WidgetTree = widget_tree
+        widget_tree.RootWidget = root
+    end)
+    if not assigned then
+        return false
+    end
+    if not is_valid(background_logo_texture) then
+        local texture_ok, texture = call_method(
+            rendering_library,
+            "ImportFileAsTexture2D",
+            controller,
+            LOGO_PATH
+        )
+        if texture_ok and is_valid(texture) then
+            background_logo_texture = texture
+        end
+    end
+    local text_ok, display_text = pcall(FText, record.text)
+    if not is_valid(background_logo_texture)
+        or not text_ok
+        or not configure_text_block(
+            text_block,
+            30,
+            make_linear_color(0.68, 0.96, 1.0, 1.0)
+        )
+        or not call_method(text_block, "SetText", display_text)
+        or not call_method(text_block, "SetJustification", 1)
+        or not call_method(text_block, "SetAutoWrapText", true)
+        or not call_method(root, "SetWidthOverride", 720.0)
+        or not call_method(root, "SetHeightOverride", 230.0)
+        or not call_method(
+            frame,
+            "SetBrushColor",
+            make_linear_color(0.01, 0.04, 0.08, 0.82)
+        )
+        or not call_method(
+            frame,
+            "SetPadding",
+            { Left = 20.0, Top = 14.0, Right = 20.0, Bottom = 16.0 }
+        )
+        or not call_method(logo_box, "SetHeightOverride", 62.0)
+        or not call_method(logo, "SetBrushFromTexture", background_logo_texture)
+        or not call_method(logo_box, "SetContent", logo)
+        or not call_method(content, "AddChildToVerticalBox", logo_box)
+        or not call_method(content, "AddChildToVerticalBox", text_block)
+        or not call_method(frame, "SetContent", content)
+    then
+        return false
+    end
+
+    local component_ok, component = call_method(
+        record.actor,
+        "AddComponentByClass",
+        Hologram.widget_component_class,
+        false,
+        Hologram.identity_transform(),
+        false
+    )
+    if not component_ok
+        or not is_valid(component)
+        or not call_method(component, "SetWidgetSpace", 0)
+        or not call_method(
+            component,
+            "SetDrawSize",
+            { X = 720.0, Y = 230.0 }
+        )
+        or not call_method(component, "SetPivot", { X = 0.5, Y = 0.5 })
+        or not call_method(component, "SetTwoSided", true)
+        or not call_method(component, "SetBackgroundColor", make_linear_color(
+            0,
+            0,
+            0,
+            0
+        ))
+        or not call_method(component, "SetTickWhenOffscreen", true)
+        or not call_method(component, "SetWindowFocusable", false)
+        or not call_method(
+            component,
+            "SetRelativeScale3D",
+            { X = 0.5, Y = 0.5, Z = 0.5 }
+        )
+        or not call_method(component, "SetWidget", world_widget)
+    then
+        return false
+    end
+    record.widget_component = component
+    record.world_widget = world_widget
+    record.world_text = text_block
+    record.world_logo = logo
+    return true
+end
+
+function Hologram.update_world_actor(controller, player_location, record)
+    if player_location == nil
+        or type(record) ~= "table"
+        or not is_valid(record.actor)
+    then
+        return false
+    end
+    local dx = record.x - player_location.X
+    local dy = record.y - player_location.Y
+    local dz = record.z - player_location.Z
+    local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+    local hidden = not hud_visible or distance > record.max_distance
+    call_method(record.actor, "SetActorHiddenInGame", hidden)
+    if hidden then
+        return false
+    end
+    local camera_manager = read_member(controller, "PlayerCameraManager")
+    local camera_ok, camera_location = call_method(
+        camera_manager,
+        "GetCameraLocation"
+    )
+    if not camera_ok or camera_location == nil then
+        return false
+    end
+    local rotation_ok, rotation = call_method(
+        Hologram.kismet_math_library,
+        "FindLookAtRotation",
+        { X = record.x, Y = record.y, Z = record.z },
+        camera_location
+    )
+    if not rotation_ok or rotation == nil then
+        return false
+    end
+    return call_method(
+        record.actor,
+        "K2_SetActorRotation",
+        Hologram.offset_rotation(rotation, record),
+        false
+    )
+end
+
 local function update_client_hologram_widgets(controller)
     if not is_valid(controller) then
         return
     end
     local player_location = Hologram.controller_location(controller)
     for _, record in pairs(client_holograms) do
-        local visible = false
-        if player_location ~= nil and ensure_hologram_widget(record) then
-            local dx = record.x - player_location.X
-            local dy = record.y - player_location.Y
-            local dz = record.z - player_location.Z
-            local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
-            if distance <= record.max_distance then
-                local screen = Hologram.project_world_location(
-                    controller,
-                    { X = record.x, Y = record.y, Z = record.z }
-                )
-                if screen ~= nil then
-                    local scale = math.max(
-                        0.72,
-                        math.min(
-                            1.08,
-                            1.08 - (distance / record.max_distance) * 0.36
-                        )
-                    )
-                    call_method(record.slot, "SetPosition", screen)
-                    call_method(
-                        record.border,
-                        "SetRenderScale",
-                        { X = scale, Y = scale }
-                    )
-                    call_method(record.border, "SetVisibility", 3)
-                    visible = true
-                end
-            end
+        if Hologram.ensure_signboard_actor(controller, record) then
+            Hologram.update_world_actor(controller, player_location, record)
         end
-        if not visible and is_valid(record.border) then
-            call_method(record.border, "SetVisibility", 1)
-        end
+    end
+    if hologram_visual_test_hide_at > 0
+        and type(hologram_visual_test_record) == "table"
+    then
+        Hologram.update_world_actor(
+            controller,
+            player_location,
+            hologram_visual_test_record
+        )
     end
     if hologram_notice_hide_at > 0
         and os.time() >= hologram_notice_hide_at
@@ -1604,6 +2020,20 @@ local function update_client_hologram_widgets(controller)
     then
         call_method(hologram_notice_border, "SetVisibility", 1)
         hologram_notice_hide_at = 0
+    end
+    if hologram_visual_test_hide_at > 0
+        and os.time() >= hologram_visual_test_hide_at
+    then
+        if type(hologram_visual_test_record) == "table"
+            and is_valid(hologram_visual_test_record.actor)
+        then
+            call_method(
+                hologram_visual_test_record.actor,
+                "K2_DestroyActor"
+            )
+        end
+        hologram_visual_test_record = nil
+        hologram_visual_test_hide_at = 0
     end
 end
 
@@ -1616,7 +2046,10 @@ Callbacks.game_thread_hologram_tick = function()
 end
 
 Callbacks.async_hologram_tick = function()
-    if next(client_holograms) == nil and hologram_notice_hide_at <= 0 then
+    if next(client_holograms) == nil
+        and hologram_notice_hide_at <= 0
+        and hologram_visual_test_hide_at <= 0
+    then
         return false
     end
     if hologram_tick_pending then
@@ -1645,50 +2078,184 @@ local function start_hologram_loop()
     LoopAsync(HOLOGRAM_TICK_MS, Callbacks.async_hologram_tick)
 end
 
-local function apply_hologram_sync(revision, holograms)
-    if revision == client_hologram_revision then
+function Hologram.load_signboard_class()
+    if is_valid(Hologram.signboard_actor_class) then
+        return Hologram.signboard_actor_class
+    end
+    local load_ok, load_error = pcall(
+        LoadAsset,
+        Hologram.SIGNBOARD_ASSET_PATH
+    )
+    if not load_ok then
+        log(
+            "ERROR",
+            "Could not load the cooked signboard asset: "
+                .. tostring(load_error)
+        )
+        return nil
+    end
+    local find_ok, signboard_class = pcall(
+        StaticFindObject,
+        Hologram.SIGNBOARD_CLASS_PATH
+    )
+    if not find_ok or not is_valid(signboard_class) then
+        log("ERROR", "Cooked signboard actor class was not found.")
+        return nil
+    end
+    Hologram.signboard_actor_class = signboard_class
+    return signboard_class
+end
+
+function Hologram.linear_color_from_hex(value)
+    local color = tostring(value or ""):upper()
+    local red, green, blue = color:match(
+        "^#(%x%x)(%x%x)(%x%x)$"
+    )
+    if red == nil then
+        return nil
+    end
+    return make_linear_color(
+        tonumber(red, 16) / 255,
+        tonumber(green, 16) / 255,
+        tonumber(blue, 16) / 255,
+        1
+    )
+end
+
+function Hologram.ensure_signboard_actor(controller, record)
+    if not is_valid(controller) or type(record) ~= "table" then
+        return false
+    end
+    if not is_valid(record.actor) then
+        local signboard_class = Hologram.load_signboard_class()
+        if not is_valid(signboard_class) then
+            return false
+        end
+        local world_ok, world = call_method(controller, "GetWorld")
+        if not world_ok or not is_valid(world) then
+            return false
+        end
+        local spawn_ok, actor = call_method(
+            world,
+            "SpawnActor",
+            signboard_class,
+            { X = record.x, Y = record.y, Z = record.z },
+            {}
+        )
+        if not spawn_ok or not is_valid(actor) then
+            return false
+        end
+        record.actor = actor
+        record.widget_component = read_member(actor, "WidgetComponent")
+        record.static_mesh = read_member(actor, "StaticMesh")
+    end
+    if not is_valid(record.widget_component)
+        or not is_valid(record.static_mesh)
+    then
+        return false
+    end
+    local color = Hologram.linear_color_from_hex(record.color)
+    if color == nil then
+        return false
+    end
+    call_method(
+        record.actor,
+        "K2_SetActorLocation",
+        { X = record.x, Y = record.y, Z = record.z },
+        false,
+        {},
+        true
+    )
+    local scale = tonumber(record.scale) or 1
+    return call_method(record.actor, "SetActorEnableCollision", false)
+        and call_method(record.static_mesh, "SetVisibility", false, false)
+        and call_method(record.widget_component, "SetTwoSided", true)
+        and call_method(
+            record.widget_component,
+            "SetTintColorAndOpacity",
+            color
+        )
+        and call_method(
+            record.widget_component,
+            "SetRelativeScale3D",
+            { X = scale, Y = scale, Z = scale }
+        )
+        and call_method(record.actor, "OnUpdateText", record.text)
+end
+
+local function render_local_hologram_visual_test(controller, command)
+    local location = Hologram.controller_location(controller)
+    if location == nil then
+        return false
+    end
+    local record = hologram_visual_test_record
+    if type(record) ~= "table" then
+        record = {
+            id = HOLOGRAM_VISUAL_TEST_ID,
+            text = Hologram.VISUAL_TEST_TEXT,
+            color = "#2ED9FF",
+            scale = Hologram.VISUAL_TEST_SCALE,
+        }
+        hologram_visual_test_record = record
+    end
+    record.text = Hologram.VISUAL_TEST_TEXT
+    record.x = location.X
+    record.y = location.Y
+    record.z = location.Z + HOLOGRAM_HEIGHT_OFFSET
+    record.max_distance = HOLOGRAM_DEFAULT_MAX_DISTANCE
+    record.pitch = tonumber(command and command.pitch) or 0
+    record.yaw = tonumber(command and command.yaw) or 0
+    record.roll = tonumber(command and command.roll) or 0
+    if not Hologram.ensure_signboard_actor(controller, record) then
+        return false
+    end
+    if not Hologram.update_world_actor(controller, location, record) then
+        return false
+    end
+    hud_visible = true
+    apply_hud_visibility()
+    hologram_visual_test_hide_at =
+        os.time() + HOLOGRAM_VISUAL_TEST_SECONDS
+    start_hologram_loop()
+    return true
+end
+
+local function apply_hologram_sync(controller, revision, holograms)
+    if revision == Hologram.client_revision then
         return true
     end
     local next_records = {}
     for id, record in pairs(holograms) do
         local previous = client_holograms[id]
         if type(previous) == "table" then
-            record.border = previous.border
-            record.text_block = previous.text_block
-            record.slot = previous.slot
+            record.actor = previous.actor
+            record.widget_component = previous.widget_component
+            record.static_mesh = previous.static_mesh
         end
         next_records[id] = record
     end
     for id, previous in pairs(client_holograms) do
         if next_records[id] == nil then
-            remove_hologram_widget(previous)
+            remove_hologram_record(previous)
         end
     end
     client_holograms = next_records
-    client_hologram_revision = revision
+    Hologram.client_revision = revision
     if next(client_holograms) ~= nil then
-        if not ensure_hologram_layer() then
-            return false
-        end
         for _, record in pairs(client_holograms) do
-            if ensure_hologram_widget(record) then
-                local text_ok, display_text = pcall(FText, record.text)
-                if text_ok then
-                    call_method(record.text_block, "SetText", display_text)
-                end
-            end
+            Hologram.ensure_signboard_actor(controller, record)
         end
         start_hologram_loop()
     end
     return true
 end
 
-local function render_hologram_protocol(raw_message)
+local function render_hologram_protocol(controller, raw_message)
     local revision, holograms = Hologram.parse_protocol(raw_message)
     if revision == nil then
         return false
     end
-    return apply_hologram_sync(revision, holograms)
+    return apply_hologram_sync(controller, revision, holograms)
 end
 
 local function render_hologram_notice_protocol(raw_message)
@@ -2083,7 +2650,7 @@ local function on_client_message(
         if not render_protocol(message) then
             if not render_gacha_protocol(message)
                 and not render_combat_protocol(message)
-                and not render_hologram_protocol(message)
+                and not render_hologram_protocol(controller, message)
             then
                 render_hologram_notice_protocol(message)
             end
@@ -2412,6 +2979,22 @@ local function player_name(entry)
     return name
 end
 
+function Hologram.controller_player_name(controller)
+    local state_ok, state = call_method(controller, "GetPalPlayerState")
+    if not state_ok or not is_valid(state) then
+        return nil
+    end
+    local name_ok, name = call_method(state, "GetPlayerName")
+    if not name_ok then
+        return nil
+    end
+    name = as_text(name):match("^%s*(.-)%s*$") or ""
+    if name == "" then
+        return nil
+    end
+    return name
+end
+
 local function send_hologram_notice(controller, message)
     if not is_valid(controller) or protocol_message_type == nil then
         return false
@@ -2447,8 +3030,51 @@ local function controllers_for_sender(sender_name)
 end
 
 local function hologram_help()
-    return "Lệnh: !holo set <id> <dòng 1 | dòng 2>; "
+    return "Lệnh local: !holo visual [pitch yaw roll]; "
+        .. "!holo set <id> <dòng 1 | dòng 2>; "
         .. "!holo move <id>; !holo remove <id>; !holo list"
+end
+
+local function on_local_chat_command(raw_player_state, message_param)
+    local ok, error_message = pcall(function()
+        local command = Hologram.parse_command(as_text(message_param))
+        if command == nil or command.action ~= "visual" then
+            return
+        end
+        local controller = find_local_player_controller()
+        if controller == nil then
+            return
+        end
+        local state_ok, local_player_state = call_method(
+            controller,
+            "GetPalPlayerState"
+        )
+        if not state_ok
+            or not is_valid(local_player_state)
+            or local_player_state ~= unwrap(raw_player_state)
+        then
+            return
+        end
+        local empty_ok, empty_text = pcall(FText, "")
+        local replaced = false
+        if empty_ok then
+            replaced = pcall(function()
+                message_param:set(empty_text)
+            end)
+        end
+        if not replaced then
+            call_value_method(unwrap(message_param), "Clear")
+        end
+        if not render_local_hologram_visual_test(controller, command) then
+            log("ERROR", "Local hologram visual test could not render.")
+        end
+    end)
+    if not ok then
+        log(
+            "ERROR",
+            "Local hologram command failed: " .. tostring(error_message)
+        )
+    end
 end
 
 local function on_admin_chat(_, chat_message_param)
@@ -2466,7 +3092,20 @@ local function on_admin_chat(_, chat_message_param)
         end
 
         call_value_method(message_value, "Clear")
-        if find_local_player_controller() ~= nil then
+        local local_controller = find_local_player_controller()
+        if local_controller ~= nil then
+            local sender_name = Hologram.trim(as_text(
+                read_member(message_object, "Sender")
+            ))
+            if command ~= nil
+                and command.action == "visual"
+                and normalized_player_name(sender_name)
+                    == normalized_player_name(
+                        Hologram.controller_player_name(local_controller)
+                    )
+            then
+                render_local_hologram_visual_test(local_controller, command)
+            end
             return
         end
 
@@ -2500,6 +3139,13 @@ local function on_admin_chat(_, chat_message_param)
         end
         if command.action == "help" then
             send_hologram_notice(controller, hologram_help())
+            return
+        end
+        if command.action == "visual" then
+            send_hologram_notice(
+                controller,
+                "Lệnh !holo visual chỉ chạy trên PalHud client."
+            )
             return
         end
         if not hologram_store_loaded then
@@ -2914,9 +3560,21 @@ local function start()
         "/Script/Pal.PalPlayerCharacter:GetPalPlayerController",
         "/Script/Pal.PalPlayerCharacter:GetCachedPlayerState",
         "/Script/Pal.PalPlayerController:GetPalPlayerState",
+        ENTER_CHAT_PATH,
         "/Script/Engine.Controller:K2_GetPawn",
         "/Script/Engine.Actor:K2_GetActorLocation",
         "/Script/Engine.PlayerController:ProjectWorldLocationToScreen",
+        "/Script/Engine.PlayerCameraManager:GetCameraLocation",
+        "/Script/Engine.Actor:K2_SetActorLocation",
+        "/Script/Engine.Actor:K2_SetActorRotation",
+        "/Script/Engine.Actor:SetActorHiddenInGame",
+        "/Script/Engine.Actor:SetActorEnableCollision",
+        "/Script/Engine.Actor:K2_DestroyActor",
+        "/Script/Engine.SceneComponent:SetVisibility",
+        "/Script/Engine.SceneComponent:SetRelativeScale3D",
+        "/Script/UMG.WidgetComponent:SetTwoSided",
+        "/Script/UMG.WidgetComponent:SetTintColorAndOpacity",
+        "/Script/Engine.KismetMathLibrary:FindLookAtRotation",
         "/Script/Engine.PlayerState:GetPlayerName",
         CONTROLLER_POSSESS_PATH,
         CONTROLLER_UNPOSSESS_PATH,
@@ -2929,12 +3587,20 @@ local function start()
             return
         end
     end
+    Hologram.kismet_math_library = find_required_object(
+        "/Script/Engine.Default__KismetMathLibrary"
+    )
+    if not is_valid(Hologram.kismet_math_library) then
+        log("ERROR", "PalHud disabled because world rotation APIs changed.")
+        return
+    end
 
     protocol_message_type = new_object_name("PalHud")
 
     Callbacks.empty_pre_hook = Callbacks.empty_pre_hook or function() end
     Callbacks.on_admin_chat = on_admin_chat
     Callbacks.on_chat = on_chat
+    Callbacks.on_local_chat_command = on_local_chat_command
     Callbacks.on_client_message = on_client_message
     Callbacks.on_logout = function(_, exiting_controller)
         forget_controller(exiting_controller)
@@ -2954,6 +3620,12 @@ local function start()
         CHAT_PATH,
         Callbacks.on_admin_chat,
         Callbacks.on_chat
+    )
+    local local_chat_ok, local_chat_error = pcall(
+        RegisterHook,
+        ENTER_CHAT_PATH,
+        Callbacks.on_local_chat_command,
+        Callbacks.empty_pre_hook
     )
     local client_message_ok, client_message_error = pcall(
         RegisterHook,
@@ -2980,6 +3652,7 @@ local function start()
         Callbacks.empty_pre_hook
     )
     if not chat_ok
+        or not local_chat_ok
         or not client_message_ok
         or not possess_ok
         or not logout_ok
@@ -2990,6 +3663,7 @@ local function start()
             "PalHud hook registration failed: "
                 .. tostring(
                     chat_error
+                        or local_chat_error
                         or client_message_error
                         or possess_error
                         or logout_error

@@ -1,5 +1,9 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.41 cập nhật PalHud v1.7.0: nhận hologram thế giới từ
+  web admin bằng hot reload, giữ bảng chữ cố định tại tọa độ bản đồ, quay mượt
+  theo camera và hỗ trợ tiếng Việt, màu, kích cỡ cùng góc Pitch/Yaw/Roll.
+
 - Launcher nội bộ v1.0.40 cập nhật PalHud v1.6.0: dòng Gacha có thời gian
   nhận lượt mới nằm riêng bên dưới và thanh tiến độ đếm ngược độc lập với
   Booster.
