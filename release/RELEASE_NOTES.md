@@ -1,5 +1,8 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.32 đồng bộ PalHud vào cả source Workshop lẫn cache
+  UE4SS đang hoạt động tại `Mods\NativeMods\UE4SS\Mods\PalHud`, gồm script,
+  logo và trạng thái bật mod, để máy đã cài bản cũ thực sự nạp v1.4.6.
 - Launcher nội bộ v1.0.31 và client PalVerify v1.0.15 không còn dùng
   timestamp từ đồng hồ máy người chơi để tính tuổi heartbeat. Coordinator tự
   đóng dấu lúc nhận report, nên máy lệch giờ không còn bị kick sai

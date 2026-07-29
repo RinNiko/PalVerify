@@ -1,3 +1,5 @@
 packaging/Info.json binary
 packaging/client/README.md binary
+packaging/client/enabled.txt binary
+packaging/client/Scripts/config.json binary
 packaging/client/Scripts/main.lua binary

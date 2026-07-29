@@ -56,6 +56,16 @@ void require_not_contains(
     require(text.find(unexpected) == std::string_view::npos, message);
 }
 
+[[nodiscard]] auto read_file(const std::filesystem::path& path)
+    -> std::string
+{
+    std::ifstream input{path, std::ios::binary};
+    return {
+        std::istreambuf_iterator<char>{input},
+        std::istreambuf_iterator<char>{},
+    };
+}
+
 void settings_update_removes_legacy_palverify_activation()
 {
     constexpr std::string_view existing =
@@ -547,15 +557,24 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
     const auto stale_workshop_root = test_root / "missing-workshop";
     const auto local_workshop_root =
         game_root / "Mods" / "Workshop";
+    const auto active_ue4ss_mods =
+        game_root / "Mods" / "NativeMods" / "UE4SS" / "Mods";
     const auto active_watchdog_root =
-        game_root / "Mods" / "NativeMods" / "UE4SS" / "Mods"
-        / "PalVerify" / "Scripts";
+        active_ue4ss_mods / "PalVerify" / "Scripts";
+    const auto active_palhud_root =
+        active_ue4ss_mods / "PalHud";
 
     std::filesystem::create_directories(
         game_root / "Pal" / "Binaries" / "Win64"
     );
     std::filesystem::create_directories(settings_path.parent_path());
     std::filesystem::create_directories(active_watchdog_root);
+    std::filesystem::create_directories(
+        active_palhud_root / "Scripts"
+    );
+    std::filesystem::create_directories(
+        active_palhud_root / "Assets"
+    );
     {
         std::ofstream stale_script{
             active_watchdog_root / "main.lua",
@@ -564,6 +583,35 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
         stale_script
             << "os.execute('PalVerifyClient.exe')\n"
                "LoopAsync(5000, function() end)\n";
+    }
+    {
+        std::ofstream stale_palhud{
+            active_palhud_root / "Scripts" / "main.lua",
+            std::ios::binary,
+        };
+        stale_palhud << "local VERSION = \"1.4.0\"\n";
+    }
+    {
+        std::ofstream stale_logo{
+            active_palhud_root / "Assets" / "logo-wordmark-hud.png",
+            std::ios::binary,
+        };
+        stale_logo << "stale-png";
+    }
+    {
+        std::ofstream active_mods_json{
+            active_ue4ss_mods / "mods.json",
+            std::ios::binary,
+        };
+        active_mods_json
+            << "[{\"mod_name\":\"PalHud\",\"mod_enabled\":false}]";
+    }
+    {
+        std::ofstream active_mods_text{
+            active_ue4ss_mods / "mods.txt",
+            std::ios::binary,
+        };
+        active_mods_text << "PalHud : 0\n";
     }
     {
         std::ofstream executable{
@@ -685,6 +733,27 @@ void installer_points_clean_machine_at_local_ue4ss_fallback()
     require(
         active_script == "return true",
         "installer must replace a stale active NativeMods watchdog"
+    );
+    require(
+        read_file(active_palhud_root / "Scripts" / "main.lua")
+            == "return true",
+        "installer must replace a stale active NativeMods PalHud script"
+    );
+    require(
+        read_file(
+            active_palhud_root / "Assets" / "logo-wordmark-hud.png"
+        ) == "png-fixture",
+        "installer must replace stale active NativeMods PalHud assets"
+    );
+    require_contains(
+        read_file(active_ue4ss_mods / "mods.json"),
+        R"("mod_name":"PalHud","mod_enabled":true)",
+        "the active NativeMods runtime must enable PalHud in mods.json"
+    );
+    require_contains(
+        read_file(active_ue4ss_mods / "mods.txt"),
+        "PalHud : 1",
+        "the active NativeMods runtime must enable PalHud in mods.txt"
     );
     std::ifstream mods_text_stream{
         local_workshop_root / "3625223587" / "Mods" / "mods.txt",
