@@ -1,5 +1,8 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.31 đồng bộ PalHud vào cả source Workshop lẫn cache
+  UE4SS đang hoạt động tại `Mods\NativeMods\UE4SS\Mods\PalHud`, gồm script,
+  logo và trạng thái bật mod, để máy đã cài bản cũ thực sự nạp v1.4.6.
 - Launcher nội bộ v1.0.30 cập nhật PalHud v1.4.6: mỗi chu kỳ HUD chỉ giữ
   controller/player state trong đúng một game-thread callback, gửi xong xóa
   ngay toàn bộ UObject để không còn RPC vào controller stale.

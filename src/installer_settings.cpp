@@ -641,6 +641,57 @@ namespace {
         };
     }
 
+    const auto active_ue4ss_root =
+        mods_root / "NativeMods" / "UE4SS";
+    const auto active_mods_directory = active_ue4ss_root / "Mods";
+    std::error_code active_mods_error;
+    if (std::filesystem::is_directory(
+            active_mods_directory,
+            active_mods_error
+        )
+        && !active_mods_error) {
+        for (const auto& file : files) {
+            const auto relative = managed_ue4ss_relative_path(
+                file.relative_path.lexically_normal()
+            );
+            if (!relative.has_value()
+                || !relative->generic_string().starts_with(
+                    "Mods/PalHud/"
+                )) {
+                continue;
+            }
+            if (!write_payload_file(active_ue4ss_root / *relative, file)) {
+                return {
+                    .success = false,
+                    .detail = "active-palhud-write-failed",
+                };
+            }
+        }
+        const auto active_json_path =
+            active_mods_directory / "mods.json";
+        const auto active_text_path =
+            active_mods_directory / "mods.txt";
+        const auto active_json =
+            enable_palhud_json(read_file(active_json_path));
+        const auto active_text =
+            enable_palhud_text(read_file(active_text_path));
+        if (!write_file_atomically(
+                active_json_path,
+                active_json,
+                ".pal3mien-tmp"
+            )
+            || !write_file_atomically(
+                active_text_path,
+                active_text,
+                ".pal3mien-tmp"
+            )) {
+            return {
+                .success = false,
+                .detail = "active-palhud-config-write-failed",
+            };
+        }
+    }
+
     const auto mods_directory = target / "Mods";
     std::vector<std::filesystem::path> watchdog_targets{
         mods_directory / "PalVerify" / "Scripts",
