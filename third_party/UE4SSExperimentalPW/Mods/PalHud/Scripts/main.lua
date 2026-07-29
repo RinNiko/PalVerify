@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.7"
+local VERSION = "1.4.8"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -125,7 +125,7 @@ local function is_valid(value)
     local ok, valid = pcall(function()
         return value:IsValid()
     end)
-    return not ok or valid == true
+    return ok and valid == true
 end
 
 local function call_method(target, method_name, ...)
@@ -142,7 +142,7 @@ local function call_method(target, method_name, ...)
     if not ok then
         return false, nil
     end
-    return true, unwrap(result)
+    return true, result
 end
 
 local function apply_hud_visibility()
@@ -199,7 +199,6 @@ local function toggle_hud_visibility()
 end
 
 local function read_member(target, member_name)
-    target = unwrap(target)
     if target == nil then
         return nil
     end
@@ -213,13 +212,16 @@ local function read_member(target, member_name)
 end
 
 local function as_text(value)
-    value = unwrap(value)
     if type(value) == "string" then
         return value
     end
     local ok, text = call_method(value, "ToString")
     if ok and text ~= nil then
         return tostring(text)
+    end
+    value = unwrap(value)
+    if type(value) == "string" then
+        return value
     end
     if value ~= nil then
         return tostring(value)
@@ -268,7 +270,6 @@ local function find_local_player_controller()
     pcall(function()
         compass_widget = FindFirstOf("WBP_Ingame_Compass_C")
     end)
-    compass_widget = unwrap(compass_widget)
     if is_valid(compass_widget) then
         local owner_ok, owner = call_method(
             compass_widget,
@@ -297,7 +298,7 @@ local function find_local_player_controller()
         end)
         if type(player_controllers) == "table" then
             for _, raw_controller in ipairs(player_controllers) do
-                local controller = unwrap(raw_controller)
+                local controller = raw_controller
                 local local_ok, is_local = call_method(
                     controller,
                     "IsLocalPlayerController"
@@ -339,7 +340,6 @@ local function construct_widget(class_object, outer, name)
         outer,
         new_object_name(name)
     )
-    widget = unwrap(widget)
     if not ok or not is_valid(widget) then
         return nil
     end
@@ -442,7 +442,6 @@ local function ensure_hud_widget()
         user_widget_class,
         local_controller
     )
-    overlay = unwrap(overlay)
     if not overlay_ok or not is_valid(overlay) then
         return false, "overlay_construct_failed"
     end
@@ -923,7 +922,7 @@ local function controller_key(controller)
 end
 
 local function cache_player(raw_player)
-    local player = unwrap(raw_player)
+    local player = raw_player
     if not is_valid(player) then
         return false, "invalid"
     end
@@ -974,7 +973,7 @@ local function discover_controllers()
         if ok and type(instances) == "table" then
             successful_scans = successful_scans + 1
             for _, player in ipairs(instances) do
-                local key = controller_key(unwrap(player))
+                local key = controller_key(player)
                 if not seen[key] then
                     seen[key] = true
                     table.insert(found, player)
@@ -1418,6 +1417,14 @@ local function start()
             SERVER_REFRESH_SECONDS
         )
     )
+end
+
+if rawget(_G, "__PALHUD_TESTING") == true then
+    _G.__PALHUD_TEST_API = {
+        find_local_player_controller = find_local_player_controller,
+        is_valid = is_valid,
+    }
+    return
 end
 
 log("INFO", "Loading PalHud v" .. VERSION .. ".")

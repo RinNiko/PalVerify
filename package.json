@@ -5,7 +5,7 @@
   "description": "Client/server verification and anti-cheat mod for Palworld",
   "scripts": {
     "test": "npm run test:probe && npm run test:installers",
-    "test:probe": "fengari tests/probe_tests.lua && fengari tests/client_probe_tests.lua && fengari tests/server_agent_probe_tests.lua",
+    "test:probe": "fengari tests/probe_tests.lua && fengari tests/client_probe_tests.lua && fengari tests/server_agent_probe_tests.lua && fengari tests/palhud_lifecycle_tests.lua",
     "test:installers": "powershell -ExecutionPolicy Bypass -File tests/windows_installer_package_tests.ps1"
   },
   "devDependencies": {

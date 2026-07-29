@@ -282,8 +282,8 @@ Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
 Require-Text $launcherSource 'launcher_version = "1.0.34"' `
     "launcher must ship the clock-independent PalVerify revision"
-Require-Text $palHudSource 'local VERSION = "1.4.7"' `
-    "launcher must bundle PalHud v1.4.7"
+Require-Text $palHudSource 'local VERSION = "1.4.8"' `
+    "launcher must bundle PalHud v1.4.8"
 Require-Text $palHudSource 'ClientMessage' `
     "bundled PalHud must use targeted ClientMessage RPC"
 Require-NoText $palHudSource 'SendSystemToPlayerChat' `
@@ -308,6 +308,12 @@ Require-Text $palHudSource 'if find_local_player_controller() ~= nil then' `
     "bundled PalHud client must not self-deliver a syncing fallback"
 Require-NoText $palHudSource 'local cached = cache_player(player)' `
     "bundled PalHud must not retain possessed player UObjects between ticks"
+Require-Text $palHudSource 'return ok and valid == true' `
+    "bundled PalHud must reject UObjects when IsValid raises an error"
+Require-NoText $palHudSource 'compass_widget = unwrap(compass_widget)' `
+    "bundled PalHud must not unwrap a direct FindFirstOf UObject"
+Require-NoText $palHudSource 'controller_key(unwrap(player))' `
+    "bundled PalHud must not unwrap direct FindAllOf UObjects"
 Require-Text $launcherSource 'palworld_is_running()' `
     "launcher must detect a running Palworld process before installing mods"
 Require-Text $launcherSource 'waiting_for_game_exit' `
