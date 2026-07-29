@@ -67,6 +67,50 @@ func TestEvaluateAllowsFreshWhitelistedPalVerifyReport(t *testing.T) {
 	}
 }
 
+func TestEvaluateUsesCoordinatorReceiptTimeInsteadOfClientClock(t *testing.T) {
+	now := time.Date(2026, 7, 29, 8, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+		AllowedMods:  map[string]AllowedMod{},
+	})
+
+	err := acceptReportForActivePlayer(t, store, Report{
+		UserID:   "steam_76561198317031083",
+		Sequence: 1,
+		// Legacy clients may send a wall-clock timestamp that is minutes off.
+		SentAt: now.Add(-481 * time.Second),
+	}, now)
+	if err != nil {
+		t.Fatalf("accept clock-skewed report: %v", err)
+	}
+
+	result := store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: "steam_76561198317031083",
+		Name:   "Bao",
+	}}, now)
+	if len(result) != 1 || result[0].Action != ActionAllow {
+		t.Fatalf("freshly received report must ignore client clock, got %#v", result)
+	}
+}
+
+func TestAcceptReportDoesNotRequireClientTimestamp(t *testing.T) {
+	now := time.Date(2026, 7, 29, 8, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 15 * time.Second,
+		AllowedMods:  map[string]AllowedMod{},
+	})
+
+	err := acceptReportForActivePlayer(t, store, Report{
+		UserID:   "steam_76561198317031083",
+		Sequence: 1,
+	}, now)
+	if err != nil {
+		t.Fatalf("accept report without client timestamp: %v", err)
+	}
+}
+
 func TestEvaluateKicksUnknownModAndLogsOnlyCompactDescriptors(t *testing.T) {
 	now := time.Date(2026, 7, 24, 7, 0, 0, 0, time.UTC)
 	store := NewStore(Config{

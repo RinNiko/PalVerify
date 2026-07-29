@@ -414,7 +414,6 @@ void report_json_contains_only_compact_policy_fields()
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         .sequence = 9,
-        .sent_at = "2026-07-24T07:00:00Z",
         .mods = {{
             .id = "PalVerify",
             .version = "0.3.0",
@@ -460,6 +459,10 @@ void report_json_contains_only_compact_policy_fields()
     require(
         json.find("CHEAT_ENGINE_RUNNING") != std::string::npos,
         "compact integrity rule"
+    );
+    require(
+        json.find("\"sentAt\"") == std::string::npos,
+        "report freshness must not depend on the player's computer clock"
     );
     require(
         json.find("\"fileName\":\"trainerlib_x64.dll\"")

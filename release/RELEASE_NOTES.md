@@ -1,5 +1,9 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.31 và client PalVerify v1.0.15 không còn dùng
+  timestamp từ đồng hồ máy người chơi để tính tuổi heartbeat. Coordinator tự
+  đóng dấu lúc nhận report, nên máy lệch giờ không còn bị kick sai
+  `STALE_REPORT`; client cũ vẫn tương thích trong lúc rollout.
 - Launcher nội bộ v1.0.30 cập nhật PalHud v1.4.6: mỗi chu kỳ HUD chỉ giữ
   controller/player state trong đúng một game-thread callback, gửi xong xóa
   ngay toàn bộ UObject để không còn RPC vào controller stale.

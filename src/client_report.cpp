@@ -907,8 +907,6 @@ auto build_client_report_json(const ClientReport& report) -> std::string
     output += ",\"challenge\":";
     append_json_string(output, report.challenge);
     output += ",\"sequence\":" + std::to_string(report.sequence);
-    output += ",\"sentAt\":";
-    append_json_string(output, report.sent_at);
     output += ",\"mods\":[";
     for (std::size_t index = 0; index < report.mods.size(); ++index) {
         if (index != 0) {

@@ -68,6 +68,7 @@ type Report struct {
 	Challenge         string              `json:"challenge"`
 	Sequence          uint64              `json:"sequence"`
 	SentAt            time.Time           `json:"sentAt"`
+	ReceivedAt        time.Time           `json:"-"`
 	Mods              []ReportedMod       `json:"mods"`
 	Violations        []string            `json:"violations"`
 	ViolationEvidence []IntegrityEvidence `json:"violationEvidence,omitempty"`
@@ -257,10 +258,7 @@ func (store *Store) AcceptReport(report Report, now time.Time) error {
 	); err != nil {
 		return err
 	}
-	if report.SentAt.IsZero() {
-		return errors.New("missing report timestamp")
-	}
-
+	report.ReceivedAt = now.UTC()
 	delete(store.challenges, key)
 	store.reports[report.UserID] = report
 	store.sequences[report.UserID] = report.Sequence
@@ -366,8 +364,7 @@ func (store *Store) Evaluate(
 
 		report, reported := store.reports[player.UserID]
 		if !reported ||
-			report.SentAt.After(now.Add(30*time.Second)) ||
-			now.Sub(report.SentAt) > store.config.ReportMaxAge {
+			now.Sub(report.ReceivedAt) > store.config.ReportMaxAge {
 			action := ActionWait
 			reason := "VERIFICATION_GRACE"
 			if now.Sub(firstSeen) >= store.config.GracePeriod {
@@ -513,21 +510,15 @@ func packagePolicyRule(mod ReportedMod, approved AllowedMod) string {
 }
 
 // reportAbsenceDetail distinguishes a client that never delivered a report from
-// one whose report arrived but is too old (or clock-skewed into the future),
-// including the observed age so MISSING_PALVERIFY kicks are debuggable.
+// one whose report arrived but is too old, including the coordinator-observed
+// age so MISSING_PALVERIFY kicks are debuggable.
 func reportAbsenceDetail(report Report, reported bool, now time.Time) string {
 	if !reported {
 		return "NO_VALID_REPORT"
 	}
-	if report.SentAt.After(now.Add(30 * time.Second)) {
-		return fmt.Sprintf(
-			"CLOCK_SKEW skew=%s",
-			report.SentAt.Sub(now).Round(time.Second),
-		)
-	}
 	return fmt.Sprintf(
 		"STALE_REPORT age=%s",
-		now.Sub(report.SentAt).Round(time.Second),
+		now.Sub(report.ReceivedAt).Round(time.Second),
 	)
 }
 

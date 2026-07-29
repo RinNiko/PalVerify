@@ -13,11 +13,9 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -122,19 +120,6 @@ namespace {
         return std::nullopt;
     }
     return palverify::steam_user_id_from_account_id(account_id);
-}
-
-[[nodiscard]] auto utc_timestamp() -> std::string
-{
-    SYSTEMTIME time{};
-    GetSystemTime(&time);
-    std::ostringstream output;
-    output << std::setfill('0') << std::setw(4) << time.wYear << '-'
-           << std::setw(2) << time.wMonth << '-' << std::setw(2)
-           << time.wDay << 'T' << std::setw(2) << time.wHour << ':'
-           << std::setw(2) << time.wMinute << ':' << std::setw(2)
-           << time.wSecond << 'Z';
-    return output.str();
 }
 
 [[nodiscard]] auto utf8_to_wide(std::string_view value)
@@ -827,7 +812,7 @@ auto wmain(int argc, wchar_t** argv) -> int
         }
     }
 
-    write_event(log, "CLIENT_STARTED protocol=3 version=1.0.14");
+    write_event(log, "CLIENT_STARTED protocol=3 version=1.0.15");
     start_client_ui_worker(
         module_directory() / "ui-queue",
         config->website
@@ -952,7 +937,6 @@ auto wmain(int argc, wchar_t** argv) -> int
             .protocol_version = "3",
             .challenge = *challenge,
             .sequence = sequence,
-            .sent_at = utc_timestamp(),
             .mods = inventory.snapshot(),
             .violations = std::move(violations),
             .violation_evidence = std::move(violation_evidence),

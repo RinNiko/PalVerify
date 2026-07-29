@@ -32,7 +32,6 @@ struct ClientReport {
     std::string protocol_version;
     std::string challenge;
     std::uint64_t sequence;
-    std::string sent_at;
     std::vector<ReportedMod> mods;
     std::vector<std::string> violations;
     std::vector<IntegrityEvidence> violation_evidence;
