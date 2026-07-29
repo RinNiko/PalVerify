@@ -210,11 +210,14 @@ local function runtime_status(runtime, player_name)
 end
 
 local function object_key(value)
+    if not is_valid(value) then
+        return value
+    end
     local ok, full_name = call_method(value, "GetFullName")
     if ok and full_name ~= nil then
         return tostring(full_name)
     end
-    return tostring(value)
+    return value
 end
 
 local function state_for_player(player, controller)

@@ -59,9 +59,13 @@ local player = direct_object({
     end,
 })
 
-local stale_player = direct_object({
+local stale_player = setmetatable(direct_object({
     IsValid = function()
         error("UObject instance is nullptr")
+    end,
+}), {
+    __tostring = function()
+        error("stale UObject must not be stringified")
     end,
 })
 
