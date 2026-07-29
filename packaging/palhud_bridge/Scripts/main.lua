@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHudBridge"
-local VERSION = "1.0.0"
+local VERSION = "1.0.1"
 local REFRESH_MS = 5000
 local PROTOCOL_PREFIX = "[PALHUD]|"
 local PLAYER_CLASS_NAMES = {
@@ -53,11 +53,28 @@ local function call_method(target, method_name, ...)
     return true, result
 end
 
+local function call_value_method(target, method_name)
+    if target == nil then
+        return false, nil
+    end
+    local method_ok, method = pcall(function()
+        return target[method_name]
+    end)
+    if not method_ok or method == nil then
+        return false, nil
+    end
+    local ok, result = pcall(method, target)
+    if not ok then
+        return false, nil
+    end
+    return true, result
+end
+
 local function as_text(value)
     if type(value) == "string" then
         return value
     end
-    local ok, text = call_method(value, "ToString")
+    local ok, text = call_value_method(value, "ToString")
     if ok and text ~= nil then
         return tostring(text)
     end

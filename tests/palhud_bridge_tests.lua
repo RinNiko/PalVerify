@@ -25,9 +25,19 @@ local function direct_object(methods)
     return methods
 end
 
+local player_name_wrapper = setmetatable({
+    ToString = function()
+        return "Alice"
+    end,
+}, {
+    __tostring = function()
+        error("FString wrapper must use ToString")
+    end,
+})
+
 local state = direct_object({
     GetPlayerName = function()
-        return "Alice"
+        return player_name_wrapper
     end,
 })
 
