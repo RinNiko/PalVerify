@@ -812,7 +812,7 @@ auto wmain(int argc, wchar_t** argv) -> int
         }
     }
 
-    write_event(log, "CLIENT_STARTED protocol=3 version=1.0.15");
+    write_event(log, "CLIENT_STARTED protocol=3 version=1.0.16");
     start_client_ui_worker(
         module_directory() / "ui-queue",
         config->website
@@ -894,14 +894,7 @@ auto wmain(int argc, wchar_t** argv) -> int
             inventory.request_refresh();
             next_inventory_refresh = now + std::chrono::minutes{1};
         }
-        const auto wall_clock_milliseconds =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()
-            ).count();
-        sequence = palverify::next_report_sequence(
-            sequence,
-            static_cast<std::uint64_t>(wall_clock_milliseconds)
-        );
+        sequence = palverify::next_report_sequence(sequence);
         const auto challenge_response = post_json_with_retry(
             config->coordinator + "/v1/client/challenge",
             palverify::build_challenge_request_json(

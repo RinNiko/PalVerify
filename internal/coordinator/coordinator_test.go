@@ -371,6 +371,51 @@ func TestAcceptReportRejectsReplayAndOversizedInventory(t *testing.T) {
 	}
 }
 
+func TestFreshChallengeAcceptsLowerSequenceAfterClientRestart(t *testing.T) {
+	now := time.Date(2026, 7, 29, 9, 0, 0, 0, time.UTC)
+	store := NewStore(Config{
+		GracePeriod:  20 * time.Second,
+		ReportMaxAge: 45 * time.Second,
+		AllowedMods:  map[string]AllowedMod{},
+	})
+	report := Report{
+		ServerID:        "bnb",
+		UserID:          "steam_76561198317031083",
+		ProtocolVersion: "3",
+		Sequence:        1_721_886_400_000,
+	}
+	store.Evaluate("bnb", []OnlinePlayer{{
+		UserID: report.UserID,
+		Name:   "Bao",
+	}}, now)
+	challenge, err := store.IssueChallenge("bnb", report.UserID, now)
+	if err != nil {
+		t.Fatalf("issue first challenge: %v", err)
+	}
+	report.Challenge = challenge
+	if err := store.AcceptReport(report, now); err != nil {
+		t.Fatalf("accept first report: %v", err)
+	}
+
+	restartedAt := now.Add(5 * time.Second)
+	challenge, err = store.IssueChallenge(
+		"bnb",
+		report.UserID,
+		restartedAt,
+	)
+	if err != nil {
+		t.Fatalf("issue restart challenge: %v", err)
+	}
+	report.Challenge = challenge
+	report.Sequence = 1
+	if err := store.AcceptReport(report, restartedAt); err != nil {
+		t.Fatalf(
+			"fresh challenge must accept restarted sequence: %v",
+			err,
+		)
+	}
+}
+
 func TestActiveSessionChallengeIsRequiredAndSingleUse(t *testing.T) {
 	now := time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC)
 	store := NewStore(Config{

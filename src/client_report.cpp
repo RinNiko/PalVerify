@@ -674,14 +674,10 @@ auto steam_user_id_from_account_id(std::uint32_t account_id) -> std::string
 }
 
 auto next_report_sequence(
-    std::uint64_t previous,
-    std::uint64_t wall_clock_milliseconds
+    std::uint64_t previous
 ) -> std::uint64_t
 {
-    if (previous >= wall_clock_milliseconds) {
-        return previous + 1;
-    }
-    return wall_clock_milliseconds;
+    return previous + 1;
 }
 
 auto should_retry_client_http(

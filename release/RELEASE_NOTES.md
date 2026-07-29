@@ -1,5 +1,9 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.34 và client PalVerify v1.0.16 dùng bộ đếm heartbeat
+  nội bộ theo tiến trình, không còn lấy `sequence` từ đồng hồ máy. Coordinator
+  xác thực chống replay bằng challenge dùng một lần nên máy chỉnh lùi thời
+  gian hoặc restart client không còn bị kick sai `STALE_REPORT`.
 - Launcher nội bộ v1.0.33 cập nhật PalHud v1.4.7: runtime phía client không
   còn tự chạy vòng gửi HUD của server khi đã có local controller, nên gói
   fallback `ĐANG ĐỒNG BỘ` không còn ghi đè ngắt quãng số Gacha thật.

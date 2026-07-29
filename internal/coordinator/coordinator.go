@@ -152,7 +152,6 @@ type Store struct {
 	mu         sync.Mutex
 	config     Config
 	reports    map[string]Report
-	sequences  map[string]uint64
 	firstSeen  map[string]time.Time
 	activeSeen map[string]time.Time
 	challenges map[string]sessionChallenge
@@ -165,7 +164,6 @@ func NewStore(config Config) *Store {
 	return &Store{
 		config:     config,
 		reports:    make(map[string]Report),
-		sequences:  make(map[string]uint64),
 		firstSeen:  make(map[string]time.Time),
 		activeSeen: make(map[string]time.Time),
 		challenges: make(map[string]sessionChallenge),
@@ -231,8 +229,8 @@ func (store *Store) AcceptReport(report Report, now time.Time) error {
 		report.Challenge != challenge.value {
 		return errors.New("invalid or expired challenge")
 	}
-	if report.Sequence == 0 || report.Sequence <= store.sequences[report.UserID] {
-		return errors.New("replayed sequence")
+	if report.Sequence == 0 {
+		return errors.New("invalid sequence")
 	}
 	if len(report.Mods) > maxReportedMods {
 		return errors.New("mod inventory is too large")
@@ -261,7 +259,6 @@ func (store *Store) AcceptReport(report Report, now time.Time) error {
 	report.ReceivedAt = now.UTC()
 	delete(store.challenges, key)
 	store.reports[report.UserID] = report
-	store.sequences[report.UserID] = report.Sequence
 	return nil
 }
 

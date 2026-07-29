@@ -778,20 +778,17 @@ void challenge_request_binds_server_and_steam_user()
     );
 }
 
-void report_sequence_uses_wall_clock_floor_after_restart()
+void report_sequence_is_process_local_and_clock_independent()
 {
     require_equal(
-        palverify::next_report_sequence(44, 1'721'807'400'000ULL),
-        std::uint64_t{1'721'807'400'000ULL},
-        "restarted client sequence must jump above an old small counter"
+        palverify::next_report_sequence(0),
+        std::uint64_t{1},
+        "a new client process must start its sequence at one"
     );
     require_equal(
-        palverify::next_report_sequence(
-            1'721'807'400'000ULL,
-            1'721'807'399'999ULL
-        ),
-        std::uint64_t{1'721'807'400'001ULL},
-        "sequence must stay monotonic when the clock does not advance"
+        palverify::next_report_sequence(44),
+        std::uint64_t{45},
+        "sequence must only increment the process-local counter"
     );
 }
 
@@ -896,8 +893,8 @@ auto main() -> int
             challenge_request_binds_server_and_steam_user,
         },
         {
-            "report sequence uses wall-clock floor",
-            report_sequence_uses_wall_clock_floor_after_restart,
+            "report sequence is process-local and clock-independent",
+            report_sequence_is_process_local_and_clock_independent,
         },
         {
             "client HTTP retries stay bounded",

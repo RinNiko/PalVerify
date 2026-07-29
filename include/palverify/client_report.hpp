@@ -86,8 +86,7 @@ struct ClientUiCommand {
 ) -> std::string;
 
 [[nodiscard]] auto next_report_sequence(
-    std::uint64_t previous,
-    std::uint64_t wall_clock_milliseconds
+    std::uint64_t previous
 ) -> std::uint64_t;
 
 [[nodiscard]] auto should_retry_client_http(
