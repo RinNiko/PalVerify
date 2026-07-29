@@ -280,8 +280,8 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.34"' `
-    "launcher must ship the clock-independent PalVerify revision"
+Require-Text $launcherSource 'launcher_version = "1.0.35"' `
+    "launcher must ship the stale-UObject PalHud fix"
 Require-Text $palHudSource 'local VERSION = "1.4.8"' `
     "launcher must bundle PalHud v1.4.8"
 Require-Text $palHudSource 'ClientMessage' `
@@ -333,10 +333,10 @@ Require-Text $launcherSource 'palverify_version = "1.0.16"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.34"' `
-    "stable manifest must trigger the clock-independent PalVerify update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.34"' `
-    "stable manifest must require the clock-independent PalVerify update"
+Require-Text $releaseManifest '"launcherVersion": "1.0.35"' `
+    "stable manifest must trigger the managed PalHud payload update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.35"' `
+    "stable manifest must require the managed PalHud payload update"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
 Require-Text $launcherSource `

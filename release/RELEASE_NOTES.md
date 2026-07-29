@@ -1,5 +1,9 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.35 cập nhật PalHud v1.4.8: không còn gọi `get()` trên
+  UObject trực tiếp từ `FindFirstOf`, `FindAllOf` hoặc method return; object
+  stale/null bị loại bằng `IsValid()` nên không còn kéo UE4SS vào
+  `EXCEPTION_ACCESS_VIOLATION` trong vòng cập nhật HUD.
 - Launcher nội bộ v1.0.34 và client PalVerify v1.0.16 dùng bộ đếm heartbeat
   nội bộ theo tiến trình, không còn lấy `sequence` từ đồng hồ máy. Coordinator
   xác thực chống replay bằng challenge dùng một lần nên máy chỉnh lùi thời
