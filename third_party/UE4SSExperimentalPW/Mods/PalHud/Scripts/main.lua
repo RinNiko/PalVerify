@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.5"
+local VERSION = "1.4.6"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -1024,13 +1024,6 @@ local function discover_controllers()
         return false
     end
     discovery_complete = true
-    log(
-        "INFO",
-        string.format(
-            "Discovered %d player controller(s).",
-            counts.ready
-        )
-    )
     return true
 end
 
@@ -1259,6 +1252,9 @@ local function update_hud()
     for _, key in ipairs(invalid) do
         controllers[key] = nil
     end
+    controllers = {}
+    discovery_complete = false
+    next_discovery_at = now + DISCOVERY_RETRY_SECONDS
 end
 
 Callbacks.game_thread_hud_tick = function()
@@ -1339,21 +1335,9 @@ local function start()
         collapse_hud_for_local_controller(controller)
         forget_controller(controller)
     end
-    Callbacks.on_possess = function(controller, pawn)
-        local player = unwrap(pawn)
-        if not is_valid(player) then
-            local pawn_ok, current_pawn = call_method(
-                unwrap(controller),
-                "K2_GetPawn"
-            )
-            if pawn_ok then
-                player = current_pawn
-            end
-        end
-        local cached = cache_player(player)
-        if cached then
-            discovery_complete = true
-        end
+    Callbacks.on_possess = function()
+        discovery_complete = false
+        next_discovery_at = 0
     end
     local chat_ok, chat_error = pcall(
         RegisterHook,
@@ -1405,7 +1389,11 @@ local function start()
         return
     end
 
-    if not discover_controllers() then
+    local startup_discovered = discover_controllers()
+    controllers = {}
+    discovery_complete = false
+    next_discovery_at = 0
+    if not startup_discovered then
         log(
             "INFO",
             "No player controller at startup; waiting for world entry."

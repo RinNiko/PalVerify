@@ -1,5 +1,8 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.30 cập nhật PalHud v1.4.6: mỗi chu kỳ HUD chỉ giữ
+  controller/player state trong đúng một game-thread callback, gửi xong xóa
+  ngay toàn bộ UObject để không còn RPC vào controller stale.
 - Launcher nội bộ v1.0.29 cập nhật PalHud v1.4.5: production bỏ hoàn toàn
   preview cục bộ, chỉ hiện HUD sau protocol thật trong world và tự collapse
   widget khi local controller `UnPossess` để không bám ra menu chính.
