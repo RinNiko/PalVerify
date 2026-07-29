@@ -1,5 +1,8 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.36 cập nhật PalHud v1.4.9: nhận protocol
+  `[PALCOMBAT]` từ PalCombatlog và hiển thị block chiến đấu với thanh cooldown
+  đếm ngược; trạng thái combat không còn chiếm khung chat.
 - Launcher nội bộ v1.0.35 cập nhật PalHud v1.4.8: không còn gọi `get()` trên
   UObject trực tiếp từ `FindFirstOf`, `FindAllOf` hoặc method return; object
   stale/null bị loại bằng `IsValid()` nên không còn kéo UE4SS vào

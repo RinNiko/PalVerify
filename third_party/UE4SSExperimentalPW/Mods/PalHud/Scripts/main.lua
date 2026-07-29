@@ -1,9 +1,10 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.4.8"
+local VERSION = "1.4.9"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
 local PROTOCOL_PREFIX = "[PALHUD]|"
+local COMBAT_PROTOCOL_PREFIX = "[PALCOMBAT]|"
 local CONTROLLER_POSSESS_PATH = "/Script/Engine.Controller:Possess"
 local CONTROLLER_UNPOSSESS_PATH = "/Script/Engine.Controller:UnPossess"
 local GAME_MODE_LOGOUT_PATH = "/Script/Engine.GameModeBase:K2_OnLogout"
@@ -27,6 +28,9 @@ local HUD_PANEL_BORDER_NAME = "PalHud_PanelBorder"
 local HUD_CONTENT_NAME = "PalHud_Content"
 local HUD_PLAYER_NAME = "PalHud_Player"
 local HUD_GACHA_NAME = "PalHud_Gacha"
+local HUD_COMBAT_NAME = "PalHud_Combat"
+local HUD_COMBAT_PROGRESS_HEIGHT_NAME = "PalHud_CombatProgressHeight"
+local HUD_COMBAT_PROGRESS_NAME = "PalHud_CombatProgress"
 local HUD_BOOSTER_NAME = "PalHud_Booster"
 local HUD_TIME_NAME = "PalHud_Time"
 local HUD_PROGRESS_HEIGHT_NAME = "PalHud_ProgressHeight"
@@ -66,6 +70,7 @@ local controllers = {}
 local render_failure_logged = false
 local protocol_received_logged = false
 local render_started_logged = false
+local combat_visibility_logged = nil
 local delivery_started_logged = false
 local last_delivery_failure_reason = nil
 local last_discovery_signature = nil
@@ -77,6 +82,9 @@ local hud_tick_queued_at = 0
 local hud_overlay = nil
 local hud_player_block = nil
 local hud_gacha_block = nil
+local hud_combat_block = nil
+local hud_combat_progress_box = nil
+local hud_combat_progress_bar = nil
 local hud_booster_block = nil
 local hud_time_block = nil
 local hud_progress_box = nil
@@ -95,6 +103,20 @@ local runtime = {
     revision = "unavailable",
     expires_at_unix = 0,
     hud_players = {},
+}
+local combat_state = {
+    active = false,
+    remaining = 0,
+    duration = 10,
+    received_at = 0,
+}
+local last_client_view = {
+    player = "Người chơi • ĐANG ĐỒNG BỘ",
+    gacha = "Gacha • ĐANG ĐỒNG BỘ",
+    booster = "",
+    time = "",
+    boosted = false,
+    progress = 0,
 }
 
 local function log(level, message)
@@ -258,6 +280,63 @@ local function safe_display_text(value)
     return text
 end
 
+local function parse_combat_protocol(raw_message, now)
+    local active_flag, remaining, duration = tostring(raw_message or ""):match(
+        "^%[PALCOMBAT%]|([01])|(%d+)|(%d+)$"
+    )
+    if active_flag == nil then
+        return nil
+    end
+    remaining = math.floor(tonumber(remaining) or 0)
+    duration = math.floor(tonumber(duration) or 0)
+    if duration < 1 or duration > 3600
+        or remaining < 0 or remaining > duration
+    then
+        return nil
+    end
+    return {
+        active = active_flag == "1" and remaining > 0,
+        remaining = remaining,
+        duration = duration,
+        received_at = tonumber(now) or os.time(),
+    }
+end
+
+local function combat_view(state, now)
+    if type(state) ~= "table" or state.active ~= true then
+        return {
+            active = false,
+            text = "",
+            progress = 0,
+        }
+    end
+    local elapsed = math.max(
+        0,
+        math.floor((tonumber(now) or os.time())
+            - (tonumber(state.received_at) or 0))
+    )
+    local remaining = math.max(
+        0,
+        math.floor(tonumber(state.remaining) or 0) - elapsed
+    )
+    local duration = math.max(1, tonumber(state.duration) or 10)
+    if remaining <= 0 then
+        return {
+            active = false,
+            text = "",
+            progress = 0,
+        }
+    end
+    return {
+        active = true,
+        text = string.format(
+            "CHIẾN ĐẤU • KHÔNG THOÁT GAME • %ds",
+            remaining
+        ),
+        progress = math.max(0, math.min(1, remaining / duration)),
+    }
+end
+
 local function safe_protocol_text(value)
     return safe_display_text(value):gsub("|", "/")
 end
@@ -372,6 +451,9 @@ local function ensure_hud_widget()
     if is_valid(hud_overlay)
         and is_valid(hud_player_block)
         and is_valid(hud_gacha_block)
+        and is_valid(hud_combat_block)
+        and is_valid(hud_combat_progress_box)
+        and is_valid(hud_combat_progress_bar)
         and is_valid(hud_booster_block)
         and is_valid(hud_time_block)
         and is_valid(hud_progress_box)
@@ -383,6 +465,9 @@ local function ensure_hud_widget()
     hud_overlay = nil
     hud_player_block = nil
     hud_gacha_block = nil
+    hud_combat_block = nil
+    hud_combat_progress_box = nil
+    hud_combat_progress_bar = nil
     hud_booster_block = nil
     hud_time_block = nil
     hud_progress_box = nil
@@ -491,6 +576,23 @@ local function ensure_hud_widget()
         content,
         HUD_GACHA_NAME
     ) or nil
+    local combat_block = content ~= nil and construct_widget(
+        text_block_class,
+        content,
+        HUD_COMBAT_NAME
+    ) or nil
+    local combat_progress_height_box =
+        content ~= nil and construct_widget(
+            size_box_class,
+            content,
+            HUD_COMBAT_PROGRESS_HEIGHT_NAME
+        ) or nil
+    local combat_progress_bar =
+        combat_progress_height_box ~= nil and construct_widget(
+            progress_bar_class,
+            combat_progress_height_box,
+            HUD_COMBAT_PROGRESS_NAME
+        ) or nil
     local booster_block = content ~= nil and construct_widget(
         text_block_class,
         content,
@@ -517,6 +619,9 @@ local function ensure_hud_widget()
         or content == nil
         or player_block == nil
         or gacha_block == nil
+        or combat_block == nil
+        or combat_progress_height_box == nil
+        or combat_progress_bar == nil
         or booster_block == nil
         or time_block == nil
         or progress_height_box == nil
@@ -548,10 +653,12 @@ local function ensure_hud_widget()
 
     local player_color = make_linear_color(0.89, 0.93, 0.98, 1.0)
     local gacha_color = make_linear_color(1.0, 0.78, 0.28, 1.0)
+    local combat_color = make_linear_color(1.0, 0.32, 0.24, 1.0)
     local booster_color = make_linear_color(0.72, 0.62, 1.0, 1.0)
     local time_color = make_linear_color(0.48, 0.88, 0.94, 1.0)
     if not configure_text_block(player_block, 15, player_color)
         or not configure_text_block(gacha_block, 14, gacha_color)
+        or not configure_text_block(combat_block, 14, combat_color)
         or not configure_text_block(booster_block, 13, booster_color)
         or not configure_text_block(time_block, 12, time_color)
     then
@@ -581,13 +688,34 @@ local function ensure_hud_widget()
         )
         or not call_method(progress_height_box, "SetHeightOverride", 7.0)
         or not call_method(
+            combat_progress_height_box,
+            "SetHeightOverride",
+            8.0
+        )
+        or not call_method(
+            combat_progress_bar,
+            "SetFillColorAndOpacity",
+            make_linear_color(0.95, 0.12, 0.06, 1.0)
+        )
+        or not call_method(
             progress_bar,
             "SetFillColorAndOpacity",
             make_linear_color(0.12, 0.86, 0.94, 1.0)
         )
+        or not call_method(
+            combat_progress_height_box,
+            "SetContent",
+            combat_progress_bar
+        )
         or not call_method(progress_height_box, "SetContent", progress_bar)
         or not call_method(content, "AddChildToVerticalBox", player_block)
         or not call_method(content, "AddChildToVerticalBox", gacha_block)
+        or not call_method(content, "AddChildToVerticalBox", combat_block)
+        or not call_method(
+            content,
+            "AddChildToVerticalBox",
+            combat_progress_height_box
+        )
         or not call_method(content, "AddChildToVerticalBox", booster_block)
         or not call_method(content, "AddChildToVerticalBox", time_block)
         or not call_method(
@@ -637,6 +765,9 @@ local function ensure_hud_widget()
     hud_overlay = overlay
     hud_player_block = player_block
     hud_gacha_block = gacha_block
+    hud_combat_block = combat_block
+    hud_combat_progress_box = combat_progress_height_box
+    hud_combat_progress_bar = combat_progress_bar
     hud_booster_block = booster_block
     hud_time_block = time_block
     hud_progress_box = progress_height_box
@@ -670,16 +801,39 @@ local function render_client_hud(view)
         FText,
         safe_display_text(view.gacha)
     )
+    local combat = combat_view(combat_state, os.time())
+    local combat_ok, combat_text = pcall(
+        FText,
+        safe_display_text(combat.text)
+    )
     local progress = math.max(0, math.min(1, tonumber(view.progress) or 0))
     local booster_visibility = view.boosted and 3 or 1
+    local combat_visibility = combat.active and 3 or 1
     local ok = player_ok
         and gacha_ok
+        and combat_ok
         and booster_ok
         and time_ok
         and call_method(hud_player_block, "SetText", player_text)
         and call_method(hud_gacha_block, "SetText", gacha_text)
+        and call_method(hud_combat_block, "SetText", combat_text)
         and call_method(hud_booster_block, "SetText", booster_text)
         and call_method(hud_time_block, "SetText", time_text)
+        and call_method(
+            hud_combat_block,
+            "SetVisibility",
+            combat_visibility
+        )
+        and call_method(
+            hud_combat_progress_box,
+            "SetVisibility",
+            combat_visibility
+        )
+        and call_method(
+            hud_combat_progress_bar,
+            "SetPercent",
+            combat.progress
+        )
         and call_method(
             hud_booster_block,
             "SetVisibility",
@@ -852,6 +1006,7 @@ local function render_protocol(raw_message)
             tonumber(gacha_spins)
         )
         or booster_view(status, os.time())
+    last_client_view = view
     if not protocol_received_logged then
         protocol_received_logged = true
         log("INFO", "Client protocol received.")
@@ -860,6 +1015,25 @@ local function render_protocol(raw_message)
     if rendered and not render_started_logged then
         render_started_logged = true
         log("INFO", "Client HUD render started.")
+    end
+    return true
+end
+
+local function render_combat_protocol(raw_message)
+    local next_state = parse_combat_protocol(raw_message, os.time())
+    if next_state == nil then
+        return false
+    end
+    combat_state = next_state
+    local rendered = render_client_hud(last_client_view)
+    if rendered and combat_visibility_logged ~= combat_state.active then
+        combat_visibility_logged = combat_state.active
+        log(
+            "INFO",
+            combat_state.active
+                and "Combat cooldown shown on PalHud."
+                or "Combat cooldown cleared from PalHud."
+        )
     end
     return true
 end
@@ -879,7 +1053,10 @@ local function on_client_message(
         if not local_ok or is_local ~= true then
             return
         end
-        render_protocol(as_text(message_param))
+        local message = as_text(message_param)
+        if not render_protocol(message) then
+            render_combat_protocol(message)
+        end
     end)
     if not ok then
         log(
@@ -1206,6 +1383,9 @@ local function update_hud()
     next_server_delivery_at = now + SERVER_REFRESH_SECONDS
 
     if find_local_player_controller() ~= nil then
+        if combat_state.active then
+            render_client_hud(last_client_view)
+        end
         controllers = {}
         discovery_complete = false
         next_discovery_at = now + DISCOVERY_RETRY_SECONDS
@@ -1421,8 +1601,10 @@ end
 
 if rawget(_G, "__PALHUD_TESTING") == true then
     _G.__PALHUD_TEST_API = {
+        combat_view = combat_view,
         find_local_player_controller = find_local_player_controller,
         is_valid = is_valid,
+        parse_combat_protocol = parse_combat_protocol,
     }
     return
 end

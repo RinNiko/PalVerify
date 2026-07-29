@@ -280,10 +280,14 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.35"' `
-    "launcher must ship the stale-UObject PalHud fix"
-Require-Text $palHudSource 'local VERSION = "1.4.8"' `
-    "launcher must bundle PalHud v1.4.8"
+Require-Text $launcherSource 'launcher_version = "1.0.36"' `
+    "launcher must ship the PalHud combat cooldown"
+Require-Text $palHudSource 'local VERSION = "1.4.9"' `
+    "launcher must bundle PalHud v1.4.9"
+Require-Text $palHudSource '[PALCOMBAT]|' `
+    "bundled PalHud must receive the combat protocol"
+Require-Text $palHudSource 'HUD_COMBAT_PROGRESS_NAME' `
+    "bundled PalHud must construct a dedicated combat cooldown bar"
 Require-Text $palHudSource 'ClientMessage' `
     "bundled PalHud must use targeted ClientMessage RPC"
 Require-NoText $palHudSource 'SendSystemToPlayerChat' `
@@ -333,9 +337,9 @@ Require-Text $launcherSource 'palverify_version = "1.0.16"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.35"' `
+Require-Text $releaseManifest '"launcherVersion": "1.0.36"' `
     "stable manifest must trigger the managed PalHud payload update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.35"' `
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.36"' `
     "stable manifest must require the managed PalHud payload update"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
