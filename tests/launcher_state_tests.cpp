@@ -482,6 +482,34 @@ void unapproved_mod_parser_selects_only_safe_not_whitelisted_ids()
     );
 }
 
+void client_start_requires_an_exact_readiness_handshake()
+{
+    require(
+        palverify::client_log_has_ready_signal(
+            "2026-7-30T12:31:1 CLIENT_WAITING_FOR_GAME\r\n"
+        ),
+        "launcher must accept a fresh waiting-for-game client log event"
+    );
+    require(
+        palverify::client_log_has_ready_signal(
+            "2026-7-30T12:31:2 CLIENT_STARTED protocol=3 version=1.0.16\n"
+        ),
+        "launcher must accept a fresh client-started log event"
+    );
+    require(
+        !palverify::client_log_has_ready_signal(
+            "2026-7-30T12:31:0 PREFLIGHT_ACCEPTED reason=VERIFIED\n"
+        ),
+        "preflight acceptance must not replace runtime client readiness"
+    );
+    require(
+        !palverify::client_log_has_ready_signal(
+            "2026-7-30T12:31:0 prefix CLIENT_WAITING_FOR_GAME\n"
+        ),
+        "launcher must reject a readiness token embedded in another line"
+    );
+}
+
 struct TestCase {
     std::string_view name;
     void (*run)();
@@ -537,6 +565,10 @@ auto main() -> int
         {
             "launcher extracts safe unapproved mod IDs",
             unapproved_mod_parser_selects_only_safe_not_whitelisted_ids,
+        },
+        {
+            "client start requires exact readiness handshake",
+            client_start_requires_an_exact_readiness_handshake,
         },
     };
 

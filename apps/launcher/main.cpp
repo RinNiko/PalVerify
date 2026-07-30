@@ -9,6 +9,7 @@
 #include <bcrypt.h>
 #include <dwmapi.h>
 #include <gdiplus.h>
+#include <ShlObj.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
 #include <winhttp.h>
@@ -40,7 +41,7 @@ namespace {
 
 constexpr wchar_t window_class[] = L"Pal3MienLauncherWindow";
 constexpr wchar_t window_title[] = L"Palworld 3 Miền";
-constexpr std::string_view launcher_version = "1.0.41";
+constexpr std::string_view launcher_version = "1.0.42";
 constexpr std::string_view launcher_display_version = "1.0";
 constexpr std::string_view palverify_version = "1.0.16";
 constexpr std::string_view default_manifest_url =
@@ -1245,9 +1246,43 @@ void record_http_failure(std::string_view operation, DWORD error)
 
 struct ClientStartProcess {
     bool started{false};
+    bool readiness_timed_out{false};
     DWORD exit_code{STILL_ACTIVE};
     DWORD win32_error{ERROR_SUCCESS};
 };
+
+[[nodiscard]] auto client_start_failure_detail(
+    const ClientStartProcess& process
+) -> std::string
+{
+    if (process.readiness_timed_out) {
+        return "readiness-timeout";
+    }
+    if (process.exit_code != STILL_ACTIVE) {
+        return "early-exit-" + std::to_string(process.exit_code);
+    }
+    return "create-process-failed-"
+        + std::to_string(process.win32_error);
+}
+
+[[nodiscard]] auto client_log_path(
+    const std::filesystem::path& executable
+) -> std::filesystem::path
+{
+    PWSTR local_app_data = nullptr;
+    if (SHGetKnownFolderPath(
+            FOLDERID_LocalAppData,
+            KF_FLAG_DEFAULT,
+            nullptr,
+            &local_app_data
+        )
+        == S_OK) {
+        const std::filesystem::path root{local_app_data};
+        CoTaskMemFree(local_app_data);
+        return root / "PalVerify" / "PalVerifyClient.log";
+    }
+    return executable.parent_path() / "PalVerifyClient.log";
+}
 
 [[nodiscard]] auto start_client_agent(
     const std::filesystem::path& game_root
@@ -1261,6 +1296,16 @@ struct ClientStartProcess {
         result.win32_error = ERROR_FILE_NOT_FOUND;
         return result;
     }
+    const auto log_path = client_log_path(executable);
+    std::error_code log_size_error;
+    auto log_offset = std::filesystem::file_size(
+        log_path,
+        log_size_error
+    );
+    if (log_size_error) {
+        log_offset = 0;
+    }
+
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
@@ -1282,18 +1327,78 @@ struct ClientStartProcess {
         return result;
     }
     CloseHandle(process.hThread);
-    const auto wait = WaitForSingleObject(process.hProcess, 750);
-    if (wait == WAIT_OBJECT_0) {
+
+    std::string appended_log;
+    constexpr auto readiness_timeout = std::chrono::seconds{8};
+    const auto deadline =
+        std::chrono::steady_clock::now() + readiness_timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto wait = WaitForSingleObject(process.hProcess, 0);
+        if (wait == WAIT_OBJECT_0) {
+            static_cast<void>(GetExitCodeProcess(
+                process.hProcess,
+                &result.exit_code
+            ));
+            break;
+        }
+        if (wait == WAIT_FAILED) {
+            result.win32_error = GetLastError();
+            break;
+        }
+
+        std::error_code current_size_error;
+        const auto current_size = std::filesystem::file_size(
+            log_path,
+            current_size_error
+        );
+        if (!current_size_error && current_size < log_offset) {
+            log_offset = 0;
+            appended_log.clear();
+        }
+        if (!current_size_error && current_size > log_offset) {
+            std::ifstream input{log_path, std::ios::binary};
+            if (input) {
+                input.seekg(static_cast<std::streamoff>(log_offset));
+                std::array<char, 512> buffer{};
+                while (input && log_offset < current_size
+                       && appended_log.size() < 4096) {
+                    const auto remaining = current_size - log_offset;
+                    input.read(
+                        buffer.data(),
+                        static_cast<std::streamsize>(
+                            std::min<std::uintmax_t>(
+                                remaining,
+                                buffer.size()
+                            )
+                        )
+                    );
+                    const auto read = input.gcount();
+                    if (read <= 0) {
+                        break;
+                    }
+                    appended_log.append(
+                        buffer.data(),
+                        static_cast<std::size_t>(read)
+                    );
+                    log_offset += static_cast<std::uintmax_t>(read);
+                }
+            }
+            if (palverify::client_log_has_ready_signal(appended_log)) {
+                result.started = true;
+                break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{25});
+    }
+    if (!result.started && result.exit_code == STILL_ACTIVE
+        && result.win32_error == ERROR_SUCCESS) {
+        result.readiness_timed_out = true;
+        TerminateProcess(process.hProcess, 125);
+        WaitForSingleObject(process.hProcess, 5000);
         static_cast<void>(GetExitCodeProcess(
             process.hProcess,
             &result.exit_code
         ));
-        result.started = result.exit_code == 0;
-    } else if (wait == WAIT_TIMEOUT) {
-        result.started = true;
-        result.exit_code = STILL_ACTIVE;
-    } else {
-        result.win32_error = GetLastError();
     }
     CloseHandle(process.hProcess);
     return result;
@@ -1801,24 +1906,14 @@ public:
                             if (!client_start.started) {
                                 result->preflight_succeeded = false;
                                 result->headline =
-                                    L"Không thể duy trì PalVerify";
+                                    L"PalVerify chưa sẵn sàng";
                                 result->detail =
-                                    L"Client đã thoát sớm. Bấm để xem mã lỗi.";
+                                    L"Client chưa xác nhận trạng thái chờ game.";
                                 result->progress = 85;
-                                const auto start_detail =
-                                    client_start.exit_code != STILL_ACTIVE
-                                    ? "early-exit-"
-                                        + std::to_string(
-                                            client_start.exit_code
-                                        )
-                                    : "create-process-failed-"
-                                        + std::to_string(
-                                            client_start.win32_error
-                                        );
                                 assign_support_log(
                                     *result,
                                     "CLIENT_AUTOSTART_FAILED",
-                                    start_detail
+                                    client_start_failure_detail(client_start)
                                 );
                             } else if (remediated_unapproved_mod) {
                                 result->headline =
@@ -1977,15 +2072,10 @@ public:
         snapshot_.headline = L"PalVerify đã dừng giữa phiên";
         snapshot_.detail =
             L"Không thể tự khởi động lại client. Bấm để xem mã lỗi.";
-        const auto start_detail =
-            client_start.exit_code != STILL_ACTIVE
-            ? "early-exit-" + std::to_string(client_start.exit_code)
-            : "create-process-failed-"
-                + std::to_string(client_start.win32_error);
         assign_support_log(
             snapshot_,
             "CLIENT_RECOVERY_FAILED",
-            start_detail
+            client_start_failure_detail(client_start)
         );
         InvalidateRect(window_, nullptr, FALSE);
     }
@@ -2021,17 +2111,11 @@ public:
             if (!client_start.started) {
                 snapshot_.headline = L"Không thể mở PalVerify";
                 snapshot_.detail =
-                    L"Client đã thoát sớm. Bấm để xem mã lỗi.";
-                const auto start_detail =
-                    client_start.exit_code != STILL_ACTIVE
-                    ? "early-exit-"
-                        + std::to_string(client_start.exit_code)
-                    : "create-process-failed-"
-                        + std::to_string(client_start.win32_error);
+                    L"Client chưa xác nhận trạng thái sẵn sàng.";
                 assign_support_log(
                     snapshot_,
                     "CLIENT_START_FAILED",
-                    start_detail
+                    client_start_failure_detail(client_start)
                 );
                 InvalidateRect(window_, nullptr, FALSE);
                 return;

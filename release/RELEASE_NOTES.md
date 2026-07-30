@@ -1,5 +1,12 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.42 chỉ mở nút BẮT ĐẦU sau khi tiến trình
+  `PalVerifyClient.exe` mới tạo ghi xác nhận `CLIENT_WAITING_FOR_GAME` hoặc
+  `CLIENT_STARTED` vào log. Preflight thành công nhưng client chưa đọc được
+  config/Steam user hoặc không vào trạng thái chờ game sẽ bị khóa ngay tại
+  launcher với `readiness-timeout`, tránh vào server rồi bị
+  `MISSING_PALVERIFY` / `NO_VALID_REPORT`.
+
 - Launcher nội bộ v1.0.41 cập nhật PalHud v1.7.0: nhận hologram thế giới từ
   web admin bằng hot reload, giữ bảng chữ cố định tại tọa độ bản đồ, quay mượt
   theo camera và hỗ trợ tiếng Việt, màu, kích cỡ cùng góc Pitch/Yaw/Roll.

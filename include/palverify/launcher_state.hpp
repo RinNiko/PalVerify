@@ -93,4 +93,8 @@ enum class LauncherStatus {
     std::string_view preflight_output
 ) -> std::vector<std::string>;
 
+[[nodiscard]] auto client_log_has_ready_signal(
+    std::string_view appended_log
+) -> bool;
+
 }  // namespace palverify

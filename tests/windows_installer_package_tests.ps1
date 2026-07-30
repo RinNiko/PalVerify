@@ -239,6 +239,10 @@ Require-Text $launcherSource 'CreateProcessW' `
     "launcher must create the client-agent process directly"
 Require-Text $launcherSource 'CLIENT_AUTOSTART_FAILED' `
     "launcher must start the continuous client immediately after preflight"
+Require-Text $launcherSource 'client_log_has_ready_signal' `
+    "launcher must wait for a fresh runtime client readiness log event"
+Require-Text $launcherSource 'readiness-timeout' `
+    "launcher must fail closed when the runtime readiness check times out"
 Require-Text $launcherSource `
     'L"https://ae3mien.net/"' `
     "launcher website fallback must open the Palworld 3 Mien website"
@@ -304,8 +308,8 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.41"' `
-    "launcher must ship the managed PalHud payload revision"
+Require-Text $launcherSource 'launcher_version = "1.0.42"' `
+    "launcher must ship the runtime readiness gate"
 Require-Text $palHudSource 'local VERSION = "1.7.0"' `
     "launcher must bundle PalHud v1.7.0"
 Require-Text $palHudSource '[PALHOLO]|' `
@@ -369,10 +373,10 @@ Require-Text $launcherSource 'palverify_version = "1.0.16"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.41"' `
-    "stable manifest must trigger the managed PalHud payload update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.41"' `
-    "stable manifest must require the managed PalHud payload update"
+Require-Text $releaseManifest '"launcherVersion": "1.0.42"' `
+    "stable manifest must trigger the runtime readiness update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.42"' `
+    "stable manifest must require the runtime readiness update"
 Require-Text $releaseManifest '"requiredPalworldBuildId": "24425675"' `
     "stable manifest must require the current Palworld Steam build"
 Require-Text $releaseManifest '"palworldVersion": "v1.0.2.100993"' `

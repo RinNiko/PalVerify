@@ -515,4 +515,28 @@ auto extract_not_whitelisted_mod_ids(
     return ids;
 }
 
+auto client_log_has_ready_signal(std::string_view appended_log) -> bool
+{
+    while (!appended_log.empty()) {
+        const auto newline = appended_log.find('\n');
+        auto line = appended_log.substr(0, newline);
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
+        const auto event_separator = line.find(' ');
+        if (event_separator != std::string_view::npos) {
+            const auto event = line.substr(event_separator + 1);
+            if (event == "CLIENT_WAITING_FOR_GAME"
+                || event.starts_with("CLIENT_STARTED protocol=")) {
+                return true;
+            }
+        }
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        appended_log.remove_prefix(newline + 1);
+    }
+    return false;
+}
+
 }  // namespace palverify
