@@ -308,8 +308,8 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.42"' `
-    "launcher must ship the runtime readiness gate"
+Require-Text $launcherSource 'launcher_version = "1.0.43"' `
+    "launcher must ship the UniKey false-positive fix"
 Require-Text $palHudSource 'local VERSION = "1.7.0"' `
     "launcher must bundle PalHud v1.7.0"
 Require-Text $palHudSource '[PALHOLO]|' `
@@ -368,15 +368,15 @@ Require-Text $launcherSource `
 Require-Text $launcherSource `
     'WinHttpSetTimeouts(session, 10000, 10000, 20000, 20000)' `
     "launcher manifest request must tolerate slow GitHub connections"
-Require-Text $launcherSource 'palverify_version = "1.0.16"' `
-    "launcher must bundle PalVerify verifier version 1.0.16"
+Require-Text $launcherSource 'palverify_version = "1.0.17"' `
+    "launcher must bundle PalVerify verifier version 1.0.17"
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.42"' `
-    "stable manifest must trigger the runtime readiness update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.42"' `
-    "stable manifest must require the runtime readiness update"
+Require-Text $releaseManifest '"launcherVersion": "1.0.43"' `
+    "stable manifest must trigger the UniKey false-positive update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.43"' `
+    "stable manifest must require the UniKey false-positive update"
 Require-Text $releaseManifest '"requiredPalworldBuildId": "24425675"' `
     "stable manifest must require the current Palworld Steam build"
 Require-Text $releaseManifest '"palworldVersion": "v1.0.2.100993"' `
@@ -412,10 +412,10 @@ Require-NoText $launcherSource 'steam://run/1623730' `
     "launcher must not auto-join a server through Steam"
 Require-NoText $launcherSource 'launch_steam_with_auto_join' `
     "launcher must not retain the auto-join launch path"
-Require-Text $packageInfo '"Version": "1.0.16"' `
-    "PalVerify package metadata must expose verifier version 1.0.16"
-Require-Text $clientAgentSource 'CLIENT_STARTED protocol=3 version=1.0.16' `
-    "client runtime log must expose verifier version 1.0.16"
+Require-Text $packageInfo '"Version": "1.0.17"' `
+    "PalVerify package metadata must expose verifier version 1.0.17"
+Require-Text $clientAgentSource 'CLIENT_STARTED protocol=3 version=1.0.17' `
+    "client runtime log must expose verifier version 1.0.17"
 Require-NoText $clientProbe 'PalVerifyClient.exe' `
     "client Lua must not launch duplicate PalVerifyClient processes"
 Require-NoText $clientProbe 'os.execute' `

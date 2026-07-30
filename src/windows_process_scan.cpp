@@ -51,6 +51,7 @@ struct ObservedModule {
     ProcessFileEvidence file;
     bool game_location;
     bool system_location;
+    bool recognized_unikey_installation;
 };
 
 [[nodiscard]] constexpr auto ascii_lower(char value) -> char
@@ -736,6 +737,45 @@ auto inspect_process_executable(const std::filesystem::path& executable)
     };
 }
 
+auto is_recognized_unikey_module_path(
+    const std::filesystem::path& module_path
+) -> bool
+{
+    const auto module_name = module_path.filename().native();
+    if (_wcsicmp(module_name.c_str(), L"UKHook40.dll") != 0) {
+        return false;
+    }
+
+    const auto directory = module_path.parent_path();
+    auto directory_name = directory.filename().native();
+    std::ranges::transform(
+        directory_name,
+        directory_name.begin(),
+        [](wchar_t character) {
+            return static_cast<wchar_t>(std::towlower(character));
+        }
+    );
+    if (directory_name.find(L"unikey") == std::wstring::npos) {
+        return false;
+    }
+
+    constexpr std::array executable_names{
+        std::wstring_view{L"UniKey.exe"},
+        std::wstring_view{L"UniKeyNT.exe"},
+    };
+    for (const auto executable_name : executable_names) {
+        std::error_code error;
+        if (std::filesystem::is_regular_file(
+                directory / executable_name,
+                error
+            )
+            && !error) {
+            return true;
+        }
+    }
+    return false;
+}
+
 auto detect_module_matches(std::span<const ModuleEvidence> modules)
     -> std::vector<ModuleRuleMatch>
 {
@@ -775,8 +815,14 @@ auto detect_module_matches(std::span<const ModuleEvidence> modules)
         } else if (match_reason.empty() && wand_module_name) {
             match_reason = "WEMOD_MODULE_NAME";
         }
+        const auto recognized_unikey_module =
+            module.recognized_unikey_installation
+            && ascii_equals_ignore_case(
+                module.image_name,
+                "ukhook40.dll"
+            );
         if (match_reason.empty() && !module.signature_valid
-            && !module.system_location
+            && !recognized_unikey_module && !module.system_location
             && !module.game_location) {
             match_reason = "UNSIGNED_EXTERNAL_MODULE";
         }
@@ -919,6 +965,8 @@ auto scan_palworld_modules(const std::filesystem::path& game_root)
                 .system_location =
                     !windows_root.empty()
                     && path_is_within(path, windows_root),
+                .recognized_unikey_installation =
+                    is_recognized_unikey_module_path(path),
             });
         } while (Module32NextW(snapshot, &entry) != FALSE);
     } else {
@@ -939,6 +987,8 @@ auto scan_palworld_modules(const std::filesystem::path& game_root)
             .signer_name = module.file.signer_name,
             .file_description = module.file.file_description,
             .company_name = module.file.company_name,
+            .recognized_unikey_installation =
+                module.recognized_unikey_installation,
         });
     }
     auto matches = detect_module_matches(evidence);

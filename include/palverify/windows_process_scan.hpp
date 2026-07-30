@@ -34,6 +34,7 @@ struct ModuleEvidence {
     std::string_view signer_name;
     std::string_view file_description;
     std::string_view company_name;
+    bool recognized_unikey_installation;
 };
 
 struct ModuleRuleMatch {
@@ -66,6 +67,10 @@ struct ModuleScanResult {
 [[nodiscard]] auto detect_module_matches(
     std::span<const ModuleEvidence> modules
 ) -> std::vector<ModuleRuleMatch>;
+
+[[nodiscard]] auto is_recognized_unikey_module_path(
+    const std::filesystem::path& module_path
+) -> bool;
 
 [[nodiscard]] auto looks_like_manual_map_candidate(
     std::span<const std::byte> header

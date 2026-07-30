@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -174,6 +175,106 @@ int main(int argc, char* argv[])
             palverify::detect_module_rules(unrelated_signed_overlay).empty(),
             "unrelated signed game overlays must remain allowed"
         );
+
+        const auto unikey_fixture_root =
+            std::filesystem::temp_directory_path()
+            / (
+                "palverify-ukhook40-"
+                + std::to_string(GetCurrentProcessId())
+            );
+        std::error_code fixture_error;
+        std::filesystem::remove_all(unikey_fixture_root, fixture_error);
+        const auto unikey_directory = unikey_fixture_root / "UniKey";
+        std::filesystem::create_directories(
+            unikey_directory,
+            fixture_error
+        );
+        require(!fixture_error, "UniKey fixture directory must be created");
+        const auto unikey_module = unikey_directory / "UKHook40.dll";
+        const auto unikey_executable = unikey_directory / "UniKeyNT.exe";
+        std::ofstream{unikey_module}.put('\0');
+        std::ofstream{unikey_executable}.put('\0');
+        require(
+            palverify::is_recognized_unikey_module_path(unikey_module),
+            "UKHook40 beside UniKey executable in a UniKey folder must be recognized"
+        );
+        require(
+            !palverify::is_recognized_unikey_module_path(
+                unikey_directory / "renamed.dll"
+            ),
+            "a renamed external DLL must not inherit the UniKey exemption"
+        );
+        std::filesystem::remove(unikey_executable, fixture_error);
+        require(
+            !palverify::is_recognized_unikey_module_path(unikey_module),
+            "a UKHook40 filename without an adjacent UniKey executable must not be trusted"
+        );
+        std::ofstream{unikey_executable}.put('\0');
+
+        const std::array recognized_unikey_modules{
+            palverify::ModuleEvidence{
+                .image_name = "UKHook40.dll",
+                .sha256 =
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                .signature_valid = false,
+                .game_location = false,
+                .system_location = false,
+                .signer_name = {},
+                .file_description = {},
+                .company_name = {},
+                .recognized_unikey_installation = true,
+            },
+        };
+        require(
+            palverify::detect_module_rules(
+                recognized_unikey_modules
+            ).empty(),
+            "recognized legacy UniKey keyboard hook must not be treated as injected cheat DLL"
+        );
+
+        const std::array unverified_ukhook_modules{
+            palverify::ModuleEvidence{
+                .image_name = "UKHook40.dll",
+                .sha256 =
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                .signature_valid = false,
+                .game_location = false,
+                .system_location = false,
+                .signer_name = {},
+                .file_description = {},
+                .company_name = {},
+                .recognized_unikey_installation = false,
+            },
+        };
+        require(
+            palverify::detect_module_rules(unverified_ukhook_modules)
+                == std::vector{
+                    palverify::ProcessRuleId::InjectedModuleDetected,
+                },
+            "an unverified external DLL cannot bypass scanning by using the UKHook40 name"
+        );
+
+        const std::array renamed_known_module_as_unikey{
+            palverify::ModuleEvidence{
+                .image_name = "UKHook40.dll",
+                .sha256 =
+                    "4d0597dc7ba65b65106743afbadd70c2045f9e07725bdf4629c0d057a4469bba",
+                .signature_valid = false,
+                .game_location = false,
+                .system_location = false,
+                .signer_name = {},
+                .file_description = {},
+                .company_name = {},
+                .recognized_unikey_installation = true,
+            },
+        };
+        require(
+            palverify::detect_module_matches(
+                renamed_known_module_as_unikey
+            )[0].match_reason == "KNOWN_INJECTED_MODULE_HASH",
+            "a known injected DLL hash must remain blocked even if renamed and placed beside UniKey"
+        );
+        std::filesystem::remove_all(unikey_fixture_root, fixture_error);
 
         const std::array wand_modules{
             palverify::ModuleEvidence{

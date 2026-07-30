@@ -1,5 +1,11 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.43 và client PalVerify v1.0.17 nhận diện
+  `UKHook40.dll` của UniKey bằng đúng tên module, thư mục UniKey và
+  `UniKey.exe`/`UniKeyNT.exe` đi kèm, tránh ban nhầm
+  `UNSIGNED_EXTERNAL_MODULE`. File chỉ giả tên vẫn bị chặn; hash module inject
+  đã biết và rule WeMod vẫn được ưu tiên.
+
 - Launcher nội bộ v1.0.42 chỉ mở nút BẮT ĐẦU sau khi tiến trình
   `PalVerifyClient.exe` mới tạo ghi xác nhận `CLIENT_WAITING_FOR_GAME` hoặc
   `CLIENT_STARTED` vào log. Preflight thành công nhưng client chưa đọc được
