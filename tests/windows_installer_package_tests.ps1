@@ -373,6 +373,10 @@ Require-Text $releaseManifest '"launcherVersion": "1.0.41"' `
     "stable manifest must trigger the managed PalHud payload update"
 Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.41"' `
     "stable manifest must require the managed PalHud payload update"
+Require-Text $releaseManifest '"requiredPalworldBuildId": "24425675"' `
+    "stable manifest must require the current Palworld Steam build"
+Require-Text $releaseManifest '"palworldVersion": "v1.0.2.100993"' `
+    "stable manifest must report the current Palworld server version"
 Require-Text $launcherSource 'L"/S /UPDATE=1"' `
     "mandatory updates must launch the verified installer in silent update mode"
 Require-Text $launcherSource `
