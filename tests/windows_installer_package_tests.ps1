@@ -308,10 +308,16 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.43"' `
-    "launcher must ship the UniKey false-positive fix"
-Require-Text $palHudSource 'local VERSION = "1.7.0"' `
-    "launcher must bundle PalHud v1.7.0"
+Require-Text $launcherSource 'launcher_version = "1.0.44"' `
+    "launcher must ship the PalHud controller-cache crash fix"
+Require-Text $palHudSource 'local VERSION = "1.7.1"' `
+    "launcher must bundle PalHud v1.7.1"
+Require-NoText $palHudSource 'FindFirstOf' `
+    "bundled PalHud must not call UE4SS global UObject scans"
+Require-Text $palHudSource 'Callbacks.local_player_controller' `
+    "bundled PalHud must use the lifecycle controller cache"
+Require-Text $palHudSource 'Callbacks.remember_local_player_controller' `
+    "bundled PalHud must populate the lifecycle controller cache"
 Require-Text $palHudSource '[PALHOLO]|' `
     "bundled PalHud must receive hot-reload world holograms"
 Require-Text $palHudSource 'BP_BuildObject_Signboard' `
@@ -373,10 +379,10 @@ Require-Text $launcherSource 'palverify_version = "1.0.17"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.43"' `
-    "stable manifest must trigger the UniKey false-positive update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.43"' `
-    "stable manifest must require the UniKey false-positive update"
+Require-Text $releaseManifest '"launcherVersion": "1.0.44"' `
+    "stable manifest must trigger the PalHud crash-fix update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.44"' `
+    "stable manifest must require the PalHud crash-fix update"
 Require-Text $releaseManifest '"requiredPalworldBuildId": "24425675"' `
     "stable manifest must require the current Palworld Steam build"
 Require-Text $releaseManifest '"palworldVersion": "v1.0.2.100993"' `

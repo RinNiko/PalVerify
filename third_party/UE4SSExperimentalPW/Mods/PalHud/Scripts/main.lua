@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.7.0"
+local VERSION = "1.7.1"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -936,50 +936,34 @@ end
 local format_multiplier
 local safe_source_label
 
-local function find_local_player_controller()
-    local compass_widget = nil
-    pcall(function()
-        compass_widget = FindFirstOf("WBP_Ingame_Compass_C")
-    end)
-    if is_valid(compass_widget) then
-        local owner_ok, owner = call_method(
-            compass_widget,
-            "GetOwningPlayer"
-        )
-        if owner_ok and is_valid(owner) then
-            local local_ok, is_local = call_method(
-                owner,
-                "IsLocalPlayerController"
-            )
-            if local_ok and is_local == true then
-                return owner
-            end
-        end
+Callbacks.remember_local_player_controller = function(raw_controller)
+    local controller = unwrap(raw_controller)
+    if not is_valid(controller) then
+        return false
     end
+    local local_ok, is_local = call_method(
+        controller,
+        "IsLocalPlayerController"
+    )
+    if not local_ok or is_local ~= true then
+        return false
+    end
+    Callbacks.local_player_controller = controller
+    return true
+end
 
-    local class_names = {
-        "PalPlayerController",
-        "PlayerController",
-        "Controller",
-    }
-    for _, class_name in ipairs(class_names) do
-        local player_controllers = nil
-        pcall(function()
-            player_controllers = FindAllOf(class_name)
-        end)
-        if type(player_controllers) == "table" then
-            for _, raw_controller in ipairs(player_controllers) do
-                local controller = raw_controller
-                local local_ok, is_local = call_method(
-                    controller,
-                    "IsLocalPlayerController"
-                )
-                if local_ok and is_local == true then
-                    return controller
-                end
-            end
+local function find_local_player_controller()
+    local controller = Callbacks.local_player_controller
+    if is_valid(controller) then
+        local local_ok, is_local = call_method(
+            controller,
+            "IsLocalPlayerController"
+        )
+        if local_ok and is_local == true then
+            return controller
         end
     end
+    Callbacks.local_player_controller = nil
     return nil
 end
 
@@ -2039,9 +2023,11 @@ end
 
 Callbacks.game_thread_hologram_tick = function()
     hologram_tick_pending = false
-    local controller = find_local_player_controller()
-    if controller ~= nil then
+    local controller = Callbacks.local_player_controller
+    if is_valid(controller) then
         update_client_hologram_widgets(controller)
+    else
+        Callbacks.local_player_controller = nil
     end
 end
 
@@ -2646,6 +2632,7 @@ local function on_client_message(
         if not local_ok or is_local ~= true then
             return
         end
+        Callbacks.local_player_controller = controller
         local message = as_text(message_param)
         if not render_protocol(message) then
             if not render_gacha_protocol(message)
@@ -2724,6 +2711,7 @@ local function cache_player(raw_player)
     if entry == nil then
         return false, reason
     end
+    Callbacks.remember_local_player_controller(entry.controller)
     controllers[controller_key(entry.controller)] = entry
     return true, "ready"
 end
@@ -2734,6 +2722,10 @@ local function forget_controller(raw_controller)
         return
     end
     local removed = false
+    if Callbacks.local_player_controller == controller then
+        Callbacks.local_player_controller = nil
+        removed = true
+    end
     for key, entry in pairs(controllers) do
         if entry.controller == controller then
             controllers[key] = nil
@@ -3611,7 +3603,8 @@ local function start()
         end
         forget_controller(controller)
     end
-    Callbacks.on_possess = function()
+    Callbacks.on_possess = function(controller)
+        Callbacks.remember_local_player_controller(controller)
         discovery_complete = false
         next_discovery_at = 0
     end

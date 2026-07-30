@@ -10,24 +10,14 @@ local function check(condition, message)
     original_print("FAIL " .. message)
 end
 
-local stale_get_calls = 0
-local stale_compass = {
-    get = function()
-        stale_get_calls = stale_get_calls + 1
-        error("UObject instance is nullptr")
-    end,
-    IsValid = function()
-        return false
-    end,
-}
-
-FindFirstOf = function(class_name)
-    if class_name == "WBP_Ingame_Compass_C" then
-        return stale_compass
-    end
+local find_first_calls = 0
+local find_all_calls = 0
+FindFirstOf = function()
+    find_first_calls = find_first_calls + 1
     return nil
 end
 FindAllOf = function()
+    find_all_calls = find_all_calls + 1
     return {}
 end
 
@@ -73,10 +63,10 @@ if type(api) == "table" then
     )
 
     local controller = api.find_local_player_controller()
-    check(controller == nil, "stale compass does not resolve a controller")
+    check(controller == nil, "missing lifecycle cache resolves no controller")
     check(
-        stale_get_calls == 0,
-        "direct FindFirstOf UObject is never unwrapped through get()"
+        find_first_calls == 0 and find_all_calls == 0,
+        "controller lookup performs no global UObject scans"
     )
 
     local valid = api.is_valid({
@@ -86,12 +76,7 @@ if type(api) == "table" then
     })
     check(valid == false, "IsValid errors reject stale UObjects")
 
-    local owner_get_calls = 0
     local owner = {
-        get = function()
-            owner_get_calls = owner_get_calls + 1
-            error("direct UObject must not be unwrapped")
-        end,
         IsValid = function()
             return true
         end,
@@ -99,50 +84,34 @@ if type(api) == "table" then
             return true
         end,
     }
-    FindFirstOf = function()
-        return {
-            IsValid = function()
-                return true
-            end,
-            GetOwningPlayer = function()
-                return owner
-            end,
-        }
-    end
-    controller = api.find_local_player_controller()
-    check(controller == owner, "valid compass resolves its local controller")
     check(
-        owner_get_calls == 0,
-        "direct method-returned UObject is never unwrapped through get()"
+        PalHudCallbacks.remember_local_player_controller(owner),
+        "possess lifecycle caches a valid local controller"
+    )
+    controller = api.find_local_player_controller()
+    check(controller == owner, "lifecycle cache resolves its local controller")
+    check(
+        find_first_calls == 0 and find_all_calls == 0,
+        "cached controller lookup remains scan-free"
     )
 
-    local listed_get_calls = 0
-    local listed_controller = {
-        get = function()
-            listed_get_calls = listed_get_calls + 1
-            error("direct UObject must not be unwrapped")
-        end,
+    local remote_controller = {
         IsValid = function()
             return true
         end,
         IsLocalPlayerController = function()
-            return true
+            return false
         end,
     }
-    FindFirstOf = function()
-        return nil
-    end
-    FindAllOf = function()
-        return { listed_controller }
-    end
-    controller = api.find_local_player_controller()
     check(
-        controller == listed_controller,
-        "FindAllOf resolves a direct local controller"
+        not PalHudCallbacks.remember_local_player_controller(
+            remote_controller
+        ),
+        "remote controllers never replace the local lifecycle cache"
     )
     check(
-        listed_get_calls == 0,
-        "direct FindAllOf UObject is never unwrapped through get()"
+        api.find_local_player_controller() == owner,
+        "rejected remote controller preserves the local cache"
     )
 end
 

@@ -1,5 +1,9 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.44 cập nhật PalHud v1.7.1: hologram không còn gọi
+  `FindFirstOf` trên mỗi frame mà dùng player-controller cache theo lifecycle,
+  tránh UE4SS truy cập UObject đang bị hủy khi đổi world hoặc thoát game.
+
 - Launcher nội bộ v1.0.43 và client PalVerify v1.0.17 nhận diện
   `UKHook40.dll` của UniKey bằng đúng tên module, thư mục UniKey và
   `UniKey.exe`/`UniKeyNT.exe` đi kèm, tránh ban nhầm
