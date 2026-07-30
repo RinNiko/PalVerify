@@ -308,10 +308,10 @@ Require-Text $launcherSource `
     "launcher text must default to a stronger font weight"
 Require-Text $launcherResources 'FILEVERSION 1,0,0,0' `
     "launcher executable metadata must expose official version 1.0"
-Require-Text $launcherSource 'launcher_version = "1.0.44"' `
-    "launcher must ship the PalHud controller-cache crash fix"
-Require-Text $palHudSource 'local VERSION = "1.7.1"' `
-    "launcher must bundle PalHud v1.7.1"
+Require-Text $launcherSource 'launcher_version = "1.0.45"' `
+    "launcher must ship the PalHud client-only delivery fix"
+Require-Text $palHudSource 'local VERSION = "1.7.2"' `
+    "launcher must bundle PalHud v1.7.2"
 Require-NoText $palHudSource 'FindFirstOf' `
     "bundled PalHud must not call UE4SS global UObject scans"
 Require-Text $palHudSource 'Callbacks.local_player_controller' `
@@ -350,8 +350,10 @@ Require-NoText $palHudSource 'runtime.local_preview' `
     "bundled PalHud must ignore stale local preview flags"
 Require-Text $palHudSource 'collapse_hud_for_local_controller' `
     "bundled PalHud must hide its viewport card when leaving a world"
-Require-Text $palHudSource 'if find_local_player_controller() ~= nil then' `
-    "bundled PalHud client must not self-deliver a syncing fallback"
+Require-Text $palHudSource '__PALHUD_TEST_SERVER_DELIVERY' `
+    "bundled PalHud must default production server delivery to disabled"
+Require-Text $palHudSource 'if not Callbacks.server_delivery_enabled() then' `
+    "bundled PalHud client must stop before local runtime fallback delivery"
 Require-NoText $palHudSource 'local cached = cache_player(player)' `
     "bundled PalHud must not retain possessed player UObjects between ticks"
 Require-Text $palHudSource 'return ok and valid == true' `
@@ -379,10 +381,10 @@ Require-Text $launcherSource 'palverify_version = "1.0.17"' `
 Require-Text $releaseManifest `
     '"launcherDownloadUrl": "https://github.com/RinNiko/PalVerify/releases/download/stable/Pal3Mien-Setup.exe"' `
     "stable manifest must use the permanent player-facing installer URL"
-Require-Text $releaseManifest '"launcherVersion": "1.0.44"' `
-    "stable manifest must trigger the PalHud crash-fix update"
-Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.44"' `
-    "stable manifest must require the PalHud crash-fix update"
+Require-Text $releaseManifest '"launcherVersion": "1.0.45"' `
+    "stable manifest must trigger the PalHud client-only delivery update"
+Require-Text $releaseManifest '"minimumLauncherVersion": "1.0.45"' `
+    "stable manifest must require the PalHud client-only delivery update"
 Require-Text $releaseManifest '"requiredPalworldBuildId": "24425675"' `
     "stable manifest must require the current Palworld Steam build"
 Require-Text $releaseManifest '"palworldVersion": "v1.0.2.100993"' `

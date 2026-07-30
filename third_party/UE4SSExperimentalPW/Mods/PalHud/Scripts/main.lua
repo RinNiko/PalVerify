@@ -1,5 +1,5 @@
 local MOD_NAME = "PalHud"
-local VERSION = "1.7.1"
+local VERSION = "1.7.2"
 local HUD_TICK_MS = 1000
 local SERVER_REFRESH_SECONDS = 5
 local DISCOVERY_RETRY_SECONDS = 5
@@ -174,6 +174,15 @@ local gacha_reward_state = {
     received_at = 0,
     balance = nil,
 }
+Callbacks.booster_timer_state = {
+    active = false,
+    active_since_unix = 0,
+    active_until_unix = 0,
+}
+Callbacks.server_delivery_enabled = function()
+    return rawget(_G, "__PALHUD_TEST_SERVER_DELIVERY") == true
+end
+Callbacks.last_local_hud_budget_warning_at = 0
 local last_client_view = {
     player = "Người chơi • ĐANG ĐỒNG BỘ",
     gacha = "Gacha • ĐANG ĐỒNG BỘ",
@@ -2569,6 +2578,25 @@ local function render_protocol(raw_message)
             player_name = player_name,
         }
     end
+    if status ~= nil
+        and tonumber(status.multiplier) ~= nil
+        and status.multiplier > 1
+        and tonumber(status.active_since_unix) ~= nil
+        and tonumber(status.active_until_unix) ~= nil
+        and status.active_until_unix > status.active_since_unix
+    then
+        Callbacks.booster_timer_state = {
+            active = true,
+            active_since_unix = status.active_since_unix,
+            active_until_unix = status.active_until_unix,
+        }
+    else
+        Callbacks.booster_timer_state = {
+            active = false,
+            active_since_unix = 0,
+            active_until_unix = 0,
+        }
+    end
     local view = boosted_flag == "2"
         and inactive_view(
             true,
@@ -3410,30 +3438,63 @@ local function send_protocol(entry, status, syncing)
     return true, nil
 end
 
+Callbacks.update_client_hud_timers = function(now)
+    if find_local_player_controller() == nil then
+        return false
+    end
+
+    local should_render = combat_state.active
+        or gacha_reward_state.balance ~= nil
+        or Callbacks.booster_timer_state.active
+        or last_client_view.boosted
+    if gacha_reward_state.balance ~= nil then
+        local gacha = gacha_view(gacha_reward_state.balance)
+        last_client_view.gacha = gacha.text
+        last_client_view.gacha_time = gacha.time
+        last_client_view.gacha_active = gacha.active
+        last_client_view.gacha_progress = gacha.progress
+    end
+
+    if Callbacks.booster_timer_state.active then
+        local active_since =
+            Callbacks.booster_timer_state.active_since_unix
+        local active_until =
+            Callbacks.booster_timer_state.active_until_unix
+        if now < active_until then
+            last_client_view.time =
+                "Thời gian • " .. format_remaining(active_until - now)
+            last_client_view.progress = math.max(
+                0,
+                math.min(
+                    1,
+                    (now - active_since) / (active_until - active_since)
+                )
+            )
+        else
+            Callbacks.booster_timer_state.active = false
+            last_client_view.booster = ""
+            last_client_view.time = ""
+            last_client_view.boosted = false
+            last_client_view.progress = 0
+        end
+    end
+
+    if should_render then
+        render_client_hud(last_client_view)
+    end
+    return true
+end
+
 local function update_hud()
+    if not Callbacks.server_delivery_enabled() then
+        return
+    end
     local now = os.time()
     if now >= next_runtime_reload_at then
         next_runtime_reload_at = now + SERVER_REFRESH_SECONDS
         queue_runtime_reload()
     end
-    if find_local_player_controller() ~= nil then
-        local should_render = combat_state.active
-            or (
-                gacha_reward_state.active
-                and gacha_reward_state.balance ~= nil
-            )
-        if gacha_reward_state.balance ~= nil then
-            local gacha = gacha_view(
-                gacha_reward_state.balance
-            )
-            last_client_view.gacha = gacha.text
-            last_client_view.gacha_time = gacha.time
-            last_client_view.gacha_active = gacha.active
-            last_client_view.gacha_progress = gacha.progress
-        end
-        if should_render then
-            render_client_hud(last_client_view)
-        end
+    if Callbacks.update_client_hud_timers(now) then
         controllers = {}
         discovery_complete = false
         next_discovery_at = now + DISCOVERY_RETRY_SECONDS
@@ -3497,6 +3558,35 @@ local function update_hud()
     controllers = {}
     discovery_complete = false
     next_discovery_at = now + DISCOVERY_RETRY_SECONDS
+end
+
+Callbacks.local_hud_timer_tick = function()
+    local started_at = os.clock()
+    local ok, error_message = pcall(
+        Callbacks.update_client_hud_timers,
+        os.time()
+    )
+    if not ok then
+        log(
+            "ERROR",
+            "Local HUD timer update failed: " .. tostring(error_message)
+        )
+        return
+    end
+    local elapsed_ms = (os.clock() - started_at) * 1000
+    local now = os.time()
+    if elapsed_ms > 2
+        and now - Callbacks.last_local_hud_budget_warning_at >= 60
+    then
+        Callbacks.last_local_hud_budget_warning_at = now
+        log(
+            "WARN",
+            string.format(
+                "Local HUD timer update took %.2f ms.",
+                elapsed_ms
+            )
+        )
+    end
 end
 
 Callbacks.game_thread_hud_tick = function()
@@ -3666,24 +3756,33 @@ local function start()
         return
     end
 
-    local startup_discovered = discover_controllers()
-    controllers = {}
-    discovery_complete = false
-    next_discovery_at = 0
-    if not startup_discovered then
-        log(
-            "INFO",
-            "No player controller at startup; waiting for world entry."
-        )
+    if Callbacks.server_delivery_enabled() then
+        local startup_discovered = discover_controllers()
+        controllers = {}
+        discovery_complete = false
+        next_discovery_at = 0
+        if not startup_discovered then
+            log(
+                "INFO",
+                "No player controller at startup; waiting for world entry."
+            )
+        end
+        queue_runtime_reload()
+        next_runtime_reload_at = os.time() + SERVER_REFRESH_SECONDS
+        LoopAsync(HUD_TICK_MS, Callbacks.async_hud_tick)
     end
-    queue_runtime_reload()
-    next_runtime_reload_at = os.time() + SERVER_REFRESH_SECONDS
-    LoopAsync(HUD_TICK_MS, Callbacks.async_hud_tick)
+    LoopInGameThreadWithDelay(
+        HUD_TICK_MS,
+        Callbacks.local_hud_timer_tick
+    )
     log(
         "INFO",
         string.format(
-            "v%s started; mode=server+client+hologram hud_tick=%dms server_refresh=%ds.",
+            "v%s started; mode=%s hud_tick=%dms server_refresh=%ds.",
             VERSION,
+            Callbacks.server_delivery_enabled()
+                and "test-server+client+hologram"
+                or "client+hologram",
             HUD_TICK_MS,
             SERVER_REFRESH_SECONDS
         )

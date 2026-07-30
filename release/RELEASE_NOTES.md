@@ -1,5 +1,10 @@
 ## Pal3Mien Launcher v1.0
 
+- Launcher nội bộ v1.0.45 cập nhật PalHud v1.7.2: package client production
+  không còn khởi động vòng server-delivery hoặc đọc runtime PalBooster cục bộ.
+  Gacha và Booster chỉ nhận snapshot từ server rồi tự đếm ngược mỗi giây trên
+  client, nên fallback `Nintendo / ĐANG ĐỒNG BỘ` không thể ghi đè dữ liệu thật.
+
 - Launcher nội bộ v1.0.44 cập nhật PalHud v1.7.1: hologram không còn gọi
   `FindFirstOf` trên mỗi frame mà dùng player-controller cache theo lifecycle,
   tránh UE4SS truy cập UObject đang bị hủy khi đổi world hoặc thoát game.
